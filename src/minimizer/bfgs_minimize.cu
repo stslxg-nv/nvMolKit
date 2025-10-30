@@ -1073,17 +1073,16 @@ bool BfgsBatchMinimizer::minimize(const int                     numIters,
   return compactAndCountConverged() == numSystems ? 0 : 1;
 }
 
-bool BfgsBatchMinimizer::minimizeWithMMFF(const int                                 numIters,
-                                          const double                              gradTol,
-                                          const std::vector<int>&                   atomStartsHost,
-                                          const AsyncDeviceVector<int>&             atomStarts,
-                                          AsyncDeviceVector<double>&                positions,
-                                          AsyncDeviceVector<double>&                grad,
-                                          AsyncDeviceVector<double>&                energyOuts,
-                                          AsyncDeviceVector<double>&                energyBuffer,
-                                          const MMFF::EnergyForceContribsDevicePtr& terms,
-                                          const MMFF::BatchedIndicesDevicePtr&      systemIndices,
-                                          const uint8_t*                            activeThisStage) {
+bool BfgsBatchMinimizer::minimizeWithMMFF(const int                                     numIters,
+                                          const double                                  gradTol,
+                                          const std::vector<int>&                       atomStartsHost,
+                                          const AsyncDeviceVector<int>&                 atomStarts,
+                                          AsyncDeviceVector<double>&                    positions,
+                                          AsyncDeviceVector<double>&                    grad,
+                                          AsyncDeviceVector<double>&                    energyOuts,
+                                          const MMFF::EnergyForceContribsDevicePtr&     terms,
+                                          const MMFF::BatchedIndicesDevicePtr&          systemIndices,
+                                          const uint8_t*                                activeThisStage) {
   const int numSystems = atomStartsHost.size() - 1;
 
   if (backend_ != BfgsBackend::PER_MOLECULE) {

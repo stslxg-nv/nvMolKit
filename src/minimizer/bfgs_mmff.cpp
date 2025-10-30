@@ -235,7 +235,6 @@ std::vector<std::vector<double>> MMFFOptimizeMoleculesConfsBfgs(std::vector<RDKi
                                        systemDevice.positions,
                                        systemDevice.grad,
                                        systemDevice.energyOuts,
-                                       systemDevice.energyBuffer,
                                        terms,
                                        systemIndices);
       }
