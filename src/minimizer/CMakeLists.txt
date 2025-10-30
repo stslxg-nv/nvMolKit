@@ -18,6 +18,12 @@ target_link_libraries(bfgs PUBLIC host_vector device_vector PRIVATE ${RDKit_LIBS
                                    cub_helpers  cccl_interface)
 target_include_directories(bfgs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Add verbose ptxas flags for bfgs_minimize_permol_kernels.cu
+set_source_files_properties(bfgs_minimize_permol_kernels.cu PROPERTIES
+  # COMPILE_FLAGS "--ptxas-options=--verbose,--register-usage-level=5,--warn-on-local-memory-usage,--warn-on-spills"
+  COMPILE_FLAGS "--ptxas-options=--verbose,--register-usage-level=5"
+)
+
 add_library(bfgs_mmff bfgs_mmff.cpp)
 target_link_libraries(
   bfgs_mmff
