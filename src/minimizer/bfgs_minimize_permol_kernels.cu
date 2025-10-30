@@ -381,7 +381,7 @@ __device__ void updateInverseHessian(const int numTerms,
 }  // namespace
 
 template <int MaxAtoms, bool UseSharedMem>
-__global__ __launch_bounds__(BLOCK_SIZE, 12) void bfgsMinimizeKernel(const int numIters,
+__global__ __launch_bounds__(BLOCK_SIZE, 1) void bfgsMinimizeKernel(const int numIters,
                                    const double gradTol,
                                    const bool scaleGrads,
                                    const MMFF::EnergyForceContribsDevicePtr* terms,
