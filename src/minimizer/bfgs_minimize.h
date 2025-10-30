@@ -85,7 +85,6 @@ struct BfgsBatchMinimizer {
                         AsyncDeviceVector<double>&                positions,
                         AsyncDeviceVector<double>&                grad,
                         AsyncDeviceVector<double>&                energyOuts,
-                        AsyncDeviceVector<double>&                energyBuffer,
                         const MMFF::EnergyForceContribsDevicePtr& terms,
                         const MMFF::BatchedIndicesDevicePtr&      systemIndices,
                         const uint8_t*                            activeThisStage = nullptr);
