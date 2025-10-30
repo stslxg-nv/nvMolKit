@@ -478,7 +478,6 @@ TEST_P(BFGSMinimizerBackendTest, E2EMinimizationSingleSystemUnconvergedMatches) 
                                   systemDevice.positions,
                                   systemDevice.grad,
                                   systemDevice.energyOuts,
-                                  systemDevice.energyBuffer,
                                   terms,
                                   systemIndices);
   }
@@ -545,7 +544,6 @@ TEST_P(BFGSMinimizerBackendTest, E2EMinimizationSingleSystemConvergedMatches) {
                                   systemDevice.positions,
                                   systemDevice.grad,
                                   systemDevice.energyOuts,
-                                  systemDevice.energyBuffer,
                                   terms,
                                   systemIndices);
   }
@@ -611,7 +609,6 @@ TEST_P(BFGSMinimizerBackendTest, E2EMinimizationMultiSystemSameMolMatchesUnconve
                                   systemDevice.positions,
                                   systemDevice.grad,
                                   systemDevice.energyOuts,
-                                  systemDevice.energyBuffer,
                                   terms,
                                   systemIndices);
   }
@@ -677,7 +674,6 @@ TEST_P(BFGSMinimizerBackendTest, E2EMinimizationMultiSystemSameMolMatchesConverg
                                   systemDevice.positions,
                                   systemDevice.grad,
                                   systemDevice.energyOuts,
-                                  systemDevice.energyBuffer,
                                   terms,
                                   systemIndices);
   }
@@ -743,7 +739,6 @@ TEST_P(BFGSMinimizerBackendTest, E2EMinimizationMultiSystemMultiMolsMatchesConve
                                   systemDevice.positions,
                                   systemDevice.grad,
                                   systemDevice.energyOuts,
-                                  systemDevice.energyBuffer,
                                   terms,
                                   systemIndices);
   }
