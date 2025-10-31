@@ -150,14 +150,15 @@ __device__ bool lineSearchPostEnergy(const bool isFirstIter,
         double rLambda2Squared = 1.0 / (lambda2 * lambda2);
         double unscaled_a = rhs1 * rLambdaSquared - rhs2 * rLambda2Squared;
         double unscaled_b = -lambda2 * rhs1 * rLambdaSquared + lambda * rhs2 * rLambda2Squared;
-        double unscaled_slope = slope * (lambda - lambda2);
+        double scale = lambda - lambda2;
+        double unscaled_slope = slope * scale;
         if (unscaled_a == 0.0) {
           tmpLambda = -unscaled_slope / (2.0 * unscaled_b);
         } else {
           double unscaled_disc = unscaled_b * unscaled_b - 3 * unscaled_a * unscaled_slope;
           if (unscaled_disc < 0.0) {
             tmpLambda = 0.5 * lambda;
-          } else if (unscaled_b <= 0.0) {
+          } else if ((unscaled_b == 0.0) || ((unscaled_b > 0.0) != (scale > 0.0))) {
             tmpLambda = (-unscaled_b + sqrt(unscaled_disc)) / (3.0 * unscaled_a);
           } else {
             tmpLambda = -unscaled_slope / (unscaled_b + sqrt(unscaled_disc));
