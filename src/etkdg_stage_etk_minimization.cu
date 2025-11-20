@@ -229,7 +229,6 @@ void ETKMinimizationStage::execute(ETKDGContext& ctx) {
                                ctx.systemDevice.positions,
                                molSystemDevice.grad,
                                molSystemDevice.energyOuts,
-                               molSystemDevice.energyBuffer,
                                terms,
                                systemIndices,
                                ctx.activeThisStage.data());

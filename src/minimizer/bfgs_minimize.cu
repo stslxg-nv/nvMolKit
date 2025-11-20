@@ -1141,7 +1141,6 @@ bool BfgsBatchMinimizer::minimizeWithETK(const int                              
                                          AsyncDeviceVector<double>&                      positions,
                                          AsyncDeviceVector<double>&                      grad,
                                          AsyncDeviceVector<double>&                      energyOuts,
-                                         AsyncDeviceVector<double>&                      energyBuffer,
                                          const DistGeom::Energy3DForceContribsDevicePtr& terms,
                                          const DistGeom::BatchedIndices3DDevicePtr&      systemIndices,
                                          const uint8_t*                                  activeThisStage) {
@@ -1204,7 +1203,6 @@ bool BfgsBatchMinimizer::minimizeWithDG(const int                               
                                         AsyncDeviceVector<double>&                    positions,
                                         AsyncDeviceVector<double>&                    grad,
                                         AsyncDeviceVector<double>&                    energyOuts,
-                                        AsyncDeviceVector<double>&                    energyBuffer,
                                         const DistGeom::EnergyForceContribsDevicePtr& terms,
                                         const DistGeom::BatchedIndicesDevicePtr&      systemIndices,
                                         double                                        chiralWeight,
