@@ -1315,7 +1315,6 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
                                  system1Device.positions,
                                  system1Device.grad,
                                  system1Device.energyOuts,
-                                 system1Device.energyBuffer,
                                  terms,
                                  idx);
     }
@@ -1351,7 +1350,6 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
                                  system2Device.positions,
                                  system2Device.grad,
                                  system2Device.energyOuts,
-                                 system2Device.energyBuffer,
                                  terms,
                                  idx);
     }
@@ -1387,7 +1385,6 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
                                  system3Device.positions,
                                  system3Device.grad,
                                  system3Device.energyOuts,
-                                 system3Device.energyBuffer,
                                  terms,
                                  idx);
     }
@@ -1449,7 +1446,6 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
                                      system1Device.positions,
                                      system1Device.grad,
                                      system1Device.energyOuts,
-                                     system1Device.energyBuffer,
                                      terms,
                                      idx);
   }
@@ -1482,7 +1478,6 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
                                      system2Device.positions,
                                      system2Device.grad,
                                      system2Device.energyOuts,
-                                     system2Device.energyBuffer,
                                      terms,
                                      idx);
   }
@@ -1515,7 +1510,6 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
                                      system3Device.positions,
                                      system3Device.grad,
                                      system3Device.energyOuts,
-                                     system3Device.energyBuffer,
                                      terms,
                                      idx);
   }
@@ -1564,8 +1558,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
                                      system2Device.indices.atomStarts,
                                      system2Device.positions,
                                      system2Device.grad,
-                                     system2Device.energyOuts,
-                                     system2Device.energyBuffer,
+                                     system2Device.energyOuts,                                    
                                      terms,
                                      idx);
   }
@@ -1598,7 +1591,6 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
                                      system1Device.positions,
                                      system1Device.grad,
                                      system1Device.energyOuts,
-                                     system1Device.energyBuffer,
                                      terms,
                                      idx);
   }
