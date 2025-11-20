@@ -147,7 +147,6 @@ void DistGeomMinimizeStage::executeImpl(ETKDGContext& ctx,
 
   const size_t numAtoms = ctx.systemHost.atomStarts.back();
   const size_t numPos   = ctx.systemHost.positions.size();
-  const int    dim      = (numPos == numAtoms * 3) ? 3 : 4;
 
   // Allocate energy buffer (not used for DG but required by interface)
   AsyncDeviceVector<double> energyBuffer(0, stream_);
