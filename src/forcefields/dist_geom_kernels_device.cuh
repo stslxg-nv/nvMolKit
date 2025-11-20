@@ -849,8 +849,8 @@ static __device__ __inline__ double molEnergyDG(const EnergyForceContribsDeviceP
   constexpr int WARP_SIZE = 32;
   auto          tile32    = cg::tiled_partition<WARP_SIZE>(cg::this_thread_block());
   const int     laneId    = tile32.thread_rank();
-  const int     warpId    = tile32.meta_group_rank();
-  const int     numWarps  = tile32.meta_group_size();
+  const int     warpId    = mark_warp_uniform(tile32.meta_group_rank());
+  const int     numWarps  = mark_warp_uniform(tile32.meta_group_size());
 
   // Get term ranges
   const int distStart   = systemIndices.distTermStarts[molIdx];
@@ -876,6 +876,7 @@ static __device__ __inline__ double molEnergyDG(const EnergyForceContribsDeviceP
   const int totalWarpsNeeded = warpsForDist + warpsForChiral + warpsForFourth;
 
   // Each warp processes chunks in round-robin fashion
+  #pragma unroll 1
   for (int chunkIdx = warpId; chunkIdx < totalWarpsNeeded; chunkIdx += numWarps) {
     // Determine which term type this chunk belongs to
     if (chunkIdx < warpsForDist) {
@@ -947,8 +948,8 @@ static __device__ __inline__ void molGradDG(const EnergyForceContribsDevicePtr& 
   constexpr int WARP_SIZE = 32;
   auto          tile32    = cg::tiled_partition<WARP_SIZE>(cg::this_thread_block());
   const int     laneId    = tile32.thread_rank();
-  const int     warpId    = tile32.meta_group_rank();
-  const int     numWarps  = tile32.meta_group_size();
+  const int     warpId    = mark_warp_uniform(tile32.meta_group_rank());
+  const int     numWarps  = mark_warp_uniform(tile32.meta_group_size());
 
   // Get term ranges
   const int distStart   = systemIndices.distTermStarts[molIdx];
@@ -963,9 +964,9 @@ static __device__ __inline__ void molGradDG(const EnergyForceContribsDevicePtr& 
   const auto& [c_idx1s, c_idx2s, c_idx3s, c_idx4s, c_volUppers, c_volLowers] = terms.chiralTerms;
   const auto& [f_idxs]                                                       = terms.fourthTerms;
 
-  const int numDist   = distEnd - distStart;
-  const int numChiral = chiralEnd - chiralStart;
-  const int numFourth = fourthEnd - fourthStart;
+  const int numDist   = mark_warp_uniform(distEnd - distStart);
+  const int numChiral = mark_warp_uniform(chiralEnd - chiralStart);
+  const int numFourth = mark_warp_uniform(fourthEnd - fourthStart);
 
   // Calculate number of warps needed for each term type
   const int warpsForDist     = (numDist + WARP_SIZE - 1) / WARP_SIZE;
@@ -974,6 +975,7 @@ static __device__ __inline__ void molGradDG(const EnergyForceContribsDevicePtr& 
   const int totalWarpsNeeded = warpsForDist + warpsForChiral + warpsForFourth;
 
   // Each warp processes chunks in round-robin fashion
+  #pragma unroll 1
   for (int chunkIdx = warpId; chunkIdx < totalWarpsNeeded; chunkIdx += numWarps) {
     // Determine which term type this chunk belongs to
     if (chunkIdx < warpsForDist) {

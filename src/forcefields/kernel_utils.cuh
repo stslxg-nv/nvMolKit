@@ -25,6 +25,12 @@
 namespace nvMolKit {
 namespace FFKernelUtils {
 
+template <typename T>
+__device__ T mark_warp_uniform(T&& input) {
+    T val = std::move(input);
+    return std::move(__shfl_sync(0xffffffff, val, 0));
+}
+
 __device__ __forceinline__ double distanceSquared(const double* pos,
                                                   const int     idx1,
                                                   const int     idx2,

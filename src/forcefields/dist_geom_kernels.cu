@@ -1028,8 +1028,8 @@ __global__ void combinedGradKernel(const EnergyForceContribsDevicePtr* terms,
     return;
   }
 
-  const int atomStart = systemIndices->atomStarts[molIdx];
-  const int atomEnd   = systemIndices->atomStarts[molIdx + 1];
+  const int atomStart = mark_warp_uniform(systemIndices->atomStarts[molIdx]);
+  const int atomEnd   = mark_warp_uniform(systemIndices->atomStarts[molIdx + 1]);
   const int numAtoms  = atomEnd - atomStart;
 
   constexpr int     maxAtomSize = 256;
