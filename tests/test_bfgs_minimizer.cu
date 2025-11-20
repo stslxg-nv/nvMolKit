@@ -809,7 +809,6 @@ TEST_P(BFGSMinimizerBackendTest, E2EMinimizationLargePathMatches) {
                                   systemDevice.positions,
                                   systemDevice.grad,
                                   systemDevice.energyOuts,
-                                  systemDevice.energyBuffer,
                                   terms,
                                   systemIndices);
   }
