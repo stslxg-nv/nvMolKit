@@ -1320,7 +1320,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
       auto idx   = nvMolKit::MMFF::toBatchedIndicesDevicePtr(system1Device);
       minimizer.minimizeWithMMFF(maxIters, 1e-4, system1Host.indices.atomStarts, system1Device.indices.atomStarts,
                                 system1Device.positions, system1Device.grad, system1Device.energyOuts,
-                                system1Device.energyBuffer, terms, idx);
+                                terms, idx);
     }
     referenceEnergies[0].resize(system1Device.energyOuts.size());
     system1Device.energyOuts.copyToHost(referenceEnergies[0]);
@@ -1342,7 +1342,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
       auto idx   = nvMolKit::MMFF::toBatchedIndicesDevicePtr(system2Device);
       minimizer.minimizeWithMMFF(maxIters, 1e-4, system2Host.indices.atomStarts, system2Device.indices.atomStarts,
                                 system2Device.positions, system2Device.grad, system2Device.energyOuts,
-                                system2Device.energyBuffer, terms, idx);
+                                terms, idx);
     }
     referenceEnergies[1].resize(system2Device.energyOuts.size());
     system2Device.energyOuts.copyToHost(referenceEnergies[1]);
@@ -1364,7 +1364,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
       auto idx   = nvMolKit::MMFF::toBatchedIndicesDevicePtr(system3Device);
       minimizer.minimizeWithMMFF(maxIters, 1e-4, system3Host.indices.atomStarts, system3Device.indices.atomStarts,
                                 system3Device.positions, system3Device.grad, system3Device.energyOuts,
-                                system3Device.energyBuffer, terms, idx);
+                                terms, idx);
     }
     referenceEnergies[2].resize(system3Device.energyOuts.size());
     system3Device.energyOuts.copyToHost(referenceEnergies[2]);
@@ -1412,7 +1412,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
     auto idx   = nvMolKit::MMFF::toBatchedIndicesDevicePtr(system1Device);
     reusedMinimizer.minimizeWithMMFF(maxIters, 1e-4, system1Host.indices.atomStarts, system1Device.indices.atomStarts,
                                     system1Device.positions, system1Device.grad, system1Device.energyOuts,
-                                    system1Device.energyBuffer, terms, idx);
+                                    terms, idx);
   }
   std::vector<double> energy1(system1Device.energyOuts.size());
   system1Device.energyOuts.copyToHost(energy1);
@@ -1431,7 +1431,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
     auto idx   = nvMolKit::MMFF::toBatchedIndicesDevicePtr(system2Device);
     reusedMinimizer.minimizeWithMMFF(maxIters, 1e-4, system2Host.indices.atomStarts, system2Device.indices.atomStarts,
                                     system2Device.positions, system2Device.grad, system2Device.energyOuts,
-                                    system2Device.energyBuffer, terms, idx);
+                                    terms, idx);
   }
   std::vector<double> energy2(system2Device.energyOuts.size());
   system2Device.energyOuts.copyToHost(energy2);
@@ -1450,7 +1450,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
     auto idx   = nvMolKit::MMFF::toBatchedIndicesDevicePtr(system3Device);
     reusedMinimizer.minimizeWithMMFF(maxIters, 1e-4, system3Host.indices.atomStarts, system3Device.indices.atomStarts,
                                     system3Device.positions, system3Device.grad, system3Device.energyOuts,
-                                    system3Device.energyBuffer, terms, idx);
+                                    terms, idx);
   }
   std::vector<double> energy3(system3Device.energyOuts.size());
   system3Device.energyOuts.copyToHost(energy3);
@@ -1486,7 +1486,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
     auto idx   = nvMolKit::MMFF::toBatchedIndicesDevicePtr(system2Device);
     reusedMinimizer.minimizeWithMMFF(maxIters, 1e-4, system2Host.indices.atomStarts, system2Device.indices.atomStarts,
                                     system2Device.positions, system2Device.grad, system2Device.energyOuts,
-                                    system2Device.energyBuffer, terms, idx);
+                                    terms, idx);
   }
   std::vector<double> energy2Second(system2Device.energyOuts.size());
   system2Device.energyOuts.copyToHost(energy2Second);
@@ -1505,7 +1505,7 @@ TEST_P(BFGSMinimizerBackendTest, ReuseMinimizer_VariedSizes) {
     auto idx   = nvMolKit::MMFF::toBatchedIndicesDevicePtr(system1Device);
     reusedMinimizer.minimizeWithMMFF(maxIters, 1e-4, system1Host.indices.atomStarts, system1Device.indices.atomStarts,
                                     system1Device.positions, system1Device.grad, system1Device.energyOuts,
-                                    system1Device.energyBuffer, terms, idx);
+                                    terms, idx);
   }
   std::vector<double> energy1Second(system1Device.energyOuts.size());
   system1Device.energyOuts.copyToHost(energy1Second);
