@@ -125,11 +125,11 @@ __device__ void lineSearchSetup(const int                                       
   }
 }
 
-__device__ __forceinline__ __forceinline__ void lineSearchPerturb(const int     numTerms,
-                                                                  const double* refPos,
-                                                                  const double* dirStart,
-                                                                  const float   lambda,
-                                                                  double*       scratchPos) {
+__device__ __forceinline__ void lineSearchPerturb(const int     numTerms,
+                                                  const double* refPos,
+                                                  const double* dirStart,
+                                                  const float   lambda,
+                                                  double*       scratchPos) {
   #pragma unroll 1
   for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
     scratchPos[i] = refPos[i] + lambda * dirStart[i];
@@ -298,7 +298,8 @@ __device__ void updateInverseHessian(const int                                  
     double dotProduct = 0.0;
     #pragma unroll COL_UNROLL_FACTOR
     for (int col = 0; col < numTerms; col++) {
-      dotProduct += invHessian[row * numTerms + col] * dGrad[col];
+      // invHessian is symmetric, this has better memory coalescing
+      dotProduct += invHessian[col * numTerms + row] * dGrad[col];
     }
     hessDGrad[row] = dotProduct;
   }
@@ -372,7 +373,8 @@ __device__ void updateInverseHessian(const int                                  
     for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
       double pxi  = fac * xi[row];
       double hdgi = fad * hessDGrad[row];
-      double dgi  = fae * dGrad[row];
+      double dgi = fae * dGrad[row];
+      double dotProduct = 0.0;
 
       #pragma unroll COL_UNROLL_FACTOR
       for (int col = 0; col < numTerms; col++) {
@@ -380,23 +382,26 @@ __device__ void updateInverseHessian(const int                                  
         double hdgj   = hessDGrad[col];
         double dgj    = dGrad[col];
         double update = pxi * pxj - hdgi * hdgj + dgi * dgj;
-        invHessian[row * numTerms + col] += update;
+        // invHessian is symmetric, this has better memory coalescing
+        double new_val = invHessian[col * numTerms + row] + update;
+        dotProduct += new_val * grad[col];
+        invHessian[col * numTerms + row] = new_val;
       }
+      xi[row] = -dotProduct;
     }
-    __syncthreads();
-  }
-
-  // Update xi = -invHessian * grad
-  #pragma unroll 1
-  for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
-    double dotProduct = 0.0;
-    #pragma unroll COL_UNROLL_FACTOR
-    for (int col = 0; col < numTerms; col++) {
-      dotProduct += invHessian[row * numTerms + col] * grad[col];
+  } else {
+    // Update xi = -invHessian * grad only
+    #pragma unroll 1
+    for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
+      double dotProduct = 0.0;
+      #pragma unroll COL_UNROLL_FACTOR
+      for (int col = 0; col < numTerms; col++) {
+        // invHessian is symmetric, this has better memory coalescing
+        dotProduct += invHessian[col * numTerms + row] * grad[col];
+      }
+      xi[row] = -dotProduct;
     }
-    xi[row] = -dotProduct;
   }
-  __syncthreads();
 }
 
 // Helper to get data dimensionality from ForceFieldType at compile time
@@ -509,12 +514,17 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   }
 
   // Initialize inverse Hessian to identity
-  const int hessianSize = numTerms * numTerms;
   #pragma unroll 1
-  for (int16_t i = tid; i < hessianSize; i += BLOCK_SIZE) {
-    const int row = i / numTerms;
-    const int col = i % numTerms;
-    invHessian[i] = (row == col) ? 1.0 : 0.0;
+  for (int16_t16_t row = tid; row < numTerms; row += BLOCK_SIZE) {
+    #pragma unroll COL_UNROLL_FACTOR
+    for (int16_t col = 0; col < row; col++) {
+      invHessian[col * numTerms + row] = 0.0;
+    }
+    invHessian[row * numTerms + row] = 1.0;
+    #pragma unroll COL_UNROLL_FACTOR
+    for (int16_t col = row + 1; col < numTerms; col++) {
+      invHessian[col * numTerms + row] = 0.0;
+    }
   }
 
   // Initialize local gradient to 0
