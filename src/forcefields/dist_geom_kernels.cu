@@ -991,7 +991,7 @@ __global__ void combinedEnergiesKernel(const EnergyForceContribsDevicePtr* terms
                                        const uint8_t*                      activeThisStage) {
   const int molIdx = blockIdx.x;
   const int tid    = threadIdx.x;
-  const int stride = blockDim.x;
+  const int stride = blockSizePerMol;
 
   if (activeThisStage != nullptr && activeThisStage[molIdx] == 0) {
     if (tid == 0) {
@@ -1004,7 +1004,7 @@ __global__ void combinedEnergiesKernel(const EnergyForceContribsDevicePtr* terms
   __shared__ typename BlockReduce::TempStorage tempStorage;
 
   const double threadEnergy =
-    molEnergyDG(*terms, *systemIndices, coords, molIdx, dimension, chiralWeight, fourthDimWeight, tid, stride);
+    molEnergyDG<blockSizePerMol>(*terms, *systemIndices, coords, molIdx, dimension, chiralWeight, fourthDimWeight, tid);
   const double blockEnergy = BlockReduce(tempStorage).Sum(threadEnergy);
 
   if (tid == 0) {
@@ -1110,7 +1110,7 @@ __global__ void combinedEnergiesKernelETK(const Energy3DForceContribsDevicePtr* 
                                           const uint8_t*                        activeThisStage) {
   const int molIdx = blockIdx.x;
   const int tid    = threadIdx.x;
-  const int stride = blockDim.x;
+  const int stride = blockSizePerMol;
 
   if (activeThisStage != nullptr && activeThisStage[molIdx] == 0) {
     if (tid == 0) {
@@ -1122,7 +1122,7 @@ __global__ void combinedEnergiesKernelETK(const Energy3DForceContribsDevicePtr* 
   using BlockReduce = cub::BlockReduce<double, blockSizePerMol>;
   __shared__ typename BlockReduce::TempStorage tempStorage;
 
-  const double threadEnergy = molEnergyETK(*terms, *systemIndices, coords, molIdx, tid, stride);
+  const double threadEnergy = molEnergyETK<blockSizePerMol>(*terms, *systemIndices, coords, molIdx, tid);
   const double blockEnergy  = BlockReduce(tempStorage).Sum(threadEnergy);
 
   if (tid == 0) {

@@ -831,6 +831,7 @@ static __device__ __forceinline__ void angleConstraintGrad(const double* pos,
   atomicAdd(&grad[posIdx3 + 2], dedp3z);
 }
 
+template <int stride>
 static __device__ __inline__ double molEnergyDG(const EnergyForceContribsDevicePtr& terms,
                                                 const BatchedIndicesDevicePtr&      systemIndices,
                                                 const double*                       coords,
@@ -838,8 +839,7 @@ static __device__ __inline__ double molEnergyDG(const EnergyForceContribsDeviceP
                                                 const int                           dimension,
                                                 const double                        chiralWeight,
                                                 const double                        fourthDimWeight,
-                                                const int                           tid,
-                                                const int                           stride) {
+                                                const int                           tid) {
   const int     atomStart = systemIndices.atomStarts[molIdx];
   const double* molCoords = coords + atomStart * dimension;
 
@@ -1028,12 +1028,12 @@ static __device__ __inline__ void molGradDG(const EnergyForceContribsDevicePtr& 
   }
 }
 
+template <int stride>
 static __device__ __inline__ double molEnergyETK(const Energy3DForceContribsDevicePtr& terms,
                                                  const BatchedIndices3DDevicePtr&      systemIndices,
                                                  const double*                         coords,
                                                  const int                             molIdx,
-                                                 const int                             tid,
-                                                 const int                             stride) {
+                                                 const int                             tid) {
   const int     atomStart = systemIndices.atomStarts[molIdx];
   const double* molCoords = coords + atomStart * 4;  // ETK uses 4D coordinates
 
