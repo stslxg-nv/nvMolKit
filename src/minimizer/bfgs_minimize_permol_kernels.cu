@@ -384,6 +384,9 @@ __device__ void updateInverseHessian(const int                                  
         invHessian[col * numTerms + row] += update;
       }
     }
+
+    // cannot remove this sync due to xi update
+    __syncthreads();
   }
 
   // Update xi = -invHessian * grad only
