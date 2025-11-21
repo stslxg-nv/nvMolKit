@@ -124,16 +124,15 @@ __device__ void lineSearchSetup(const int                                       
   }
 }
 
-__device__ void lineSearchPerturb(const int     numTerms,
-                                  const double* refPos,
-                                  const double* dirStart,
-                                  const float   lambda,
-                                  double*       scratchPos) {
+__device__ __forceinline__ void lineSearchPerturb(const int     numTerms,
+                                                  const double* refPos,
+                                                  const double* dirStart,
+                                                  const float   lambda,
+                                                  double*       scratchPos) {
   #pragma unroll 1
   for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
     scratchPos[i] = refPos[i] + lambda * dirStart[i];
   }
-  __syncthreads();
 }
 
 __device__ bool lineSearchPostEnergy(const bool  isFirstIter,
@@ -145,44 +144,39 @@ __device__ bool lineSearchPostEnergy(const bool  isFirstIter,
                                      double&     lambda2,
                                      double&     eScratch,
                                      double&     lambdaOut) {
-  bool converged = false;
-
-  if (threadIdx.x == 0) {
-    const float eDiff = newE - prevE;
-    if (lambda < lambdaMin || eDiff <= FUNCTOL * lambda * slope) {
-      converged = true;
+  const float eDiff = newE - prevE;
+  if (lambda < lambdaMin || eDiff <= FUNCTOL * lambda * slope) {
+    return true;
+  } else {
+    float tmpLambda;
+    if (isFirstIter) {
+      tmpLambda = -slope / (2.0f * (eDiff - slope));
     } else {
-      float tmpLambda;
-      if (isFirstIter) {
-        tmpLambda = -slope / (2.0f * (eDiff - slope));
+      const float rhs1     = eDiff - lambda * slope;
+      const float rhs2     = eScratch - prevE - lambda2 * slope;
+      const float rLambda  = 1.0f / static_cast<float>(lambda);
+      const float rLambda2 = 1.0f / static_cast<float>(lambda2);
+      const float rScale   = 1.0f / (lambda - static_cast<float>(lambda2));
+      const float a        = (rhs1 * rLambda * rLambda - rhs2 * rLambda2 * rLambda2) * rScale;
+      const float b        = (-lambda2 * rhs1 * rLambda * rLambda + lambda * rhs2 * rLambda2 * rLambda2) * rScale;
+      if (a == 0.0f) {
+        tmpLambda = -slope / (2.0f * b);
       } else {
-        const float rhs1     = eDiff - lambda * slope;
-        const float rhs2     = eScratch - prevE - lambda2 * slope;
-        const float rLambda  = 1.0f / static_cast<float>(lambda);
-        const float rLambda2 = 1.0f / static_cast<float>(lambda2);
-        const float rScale   = 1.0f / (lambda - static_cast<float>(lambda2));
-        const float a        = (rhs1 * rLambda * rLambda - rhs2 * rLambda2 * rLambda2) * rScale;
-        const float b        = (-lambda2 * rhs1 * rLambda * rLambda + lambda * rhs2 * rLambda2 * rLambda2) * rScale;
-        if (a == 0.0f) {
-          tmpLambda = -slope / (2.0f * b);
+        const float disc = b * b - 3.0f * a * slope;
+        if (disc < 0.0f) {
+          tmpLambda = 0.5f * lambda;
         } else {
-          const float disc = b * b - 3.0f * a * slope;
-          if (disc < 0.0f) {
-            tmpLambda = 0.5f * lambda;
-          } else {
-            const float sqrtDisc = sqrtf(disc);
-            tmpLambda            = (b <= 0.0f) ? (-b + sqrtDisc) / (3.0f * a) : -slope / (b + sqrtDisc);
-          }
+          const float sqrtDisc = sqrtf(disc);
+          tmpLambda            = (b <= 0.0f) ? (-b + sqrtDisc) / (3.0f * a) : -slope / (b + sqrtDisc);
         }
-        tmpLambda = fminf(tmpLambda, 0.5f * lambda);
       }
-      lambda2   = lambda;
-      eScratch  = newE;
-      lambdaOut = fmaxf(tmpLambda, 0.1f * lambda);
+      tmpLambda = fminf(tmpLambda, 0.5f * lambda);
     }
+    lambda2   = lambda;
+    eScratch  = newE;
+    lambdaOut = fmaxf(tmpLambda, 0.1f * lambda);
   }
-  __syncthreads();
-  return converged;
+  return false;
 }
 
 __device__ void setDirection(const int                                                   numTerms,
@@ -217,7 +211,6 @@ __device__ void setDirection(const int                                          
   if (threadIdx.x == 0 && blockMax < TOLX) {
     converged = true;
   }
-  __syncthreads();
 }
 
 template <bool scaleGrads>
@@ -240,24 +233,24 @@ __device__ void scaleGrad(const int                                             
 
   double blockMax = cub::BlockReduce<double, BLOCK_SIZE>(tempStorage).Reduce(maxGrad, cubMax());
 
-  __shared__ double distributedMax[1];
+  __shared__ bool needMoreScale;
   if (threadIdx.x == 0) {
-    distributedMax[0] = blockMax;
+    needMoreScale = scaleGrads && (blockMax > 10.0);
+    if (needMoreScale) {
+      while (blockMax * gradScale > 10.0) {
+        gradScale *= 0.5;
+      }
+    }
   }
+
   __syncthreads();
 
-  maxGrad = distributedMax[0];
-
-  if (scaleGrads && maxGrad > 10.0) {
-    while (maxGrad * gradScale > 10.0) {
-      gradScale *= 0.5;
-    }
+  if (needMoreScale) {
     #pragma unroll 1
     for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
       grad[i] *= gradScale;
     }
   }
-  __syncthreads();
 }
 
 __device__ void updateDGrad(const int                                                   numTerms,
@@ -283,12 +276,10 @@ __device__ void updateDGrad(const int                                           
 
   if (threadIdx.x == 0) {
     const float term = max(energy * gradScale, 1.0);
-    blockMax /= term;
-    if (blockMax < gradTol) {
+    if (blockMax < gradTol * term) {
       converged = true;
     }
   }
-  __syncthreads();
 }
 
 __device__ void updateInverseHessian(const int                                                   numTerms,
@@ -514,26 +505,38 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
       localPos[i] = globalPos[i];
     }
-    __syncthreads();
   }
 
   // Initialize inverse Hessian to identity
   const int hessianSize = numTerms * numTerms;
   #pragma unroll 1
-  for (int i = tid; i < hessianSize; i += BLOCK_SIZE) {
+  for (int16_t i = tid; i < hessianSize; i += BLOCK_SIZE) {
     const int row = i / numTerms;
     const int col = i % numTerms;
     invHessian[i] = (row == col) ? 1.0 : 0.0;
   }
-  
+
+  // Initialize local gradient to 0
+  #pragma unroll 1
+  for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
+    localGrad[i] = 0.0;
+  }
+
   if (tid == 0) {
     converged = false;
   }
-  __syncthreads();
 
   // Shared temp storage for all BlockReduce operations
   using BlockReduce = cub::BlockReduce<double, BLOCK_SIZE>;
   __shared__ typename BlockReduce::TempStorage tempStorage;
+
+  // Set max step
+  // Implicit __syncthreads() inside setMaxStep due to BlockReduce
+  // no need to sync before this for localPos since the access pattern is consistent
+  setMaxStep(localPos, numTerms, &maxStep, tempStorage);
+  // if (tid == 0) {
+  //   printf("maxStep=%f\n", maxStep);
+  // }
 
   // Compute initial energy
   double threadEnergy;
@@ -551,19 +554,16 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
                                                               tid);
   }
   const double blockEnergy = BlockReduce(tempStorage).Sum(threadEnergy);
-
+  // no need to sync after this for prevE and energyOuts since they are not immediately used
   if (tid == 0) {
     prevE              = blockEnergy;
     energyOuts[molIdx] = blockEnergy;
+    // if (blockIdx.x == 0) {
+    //   printf("Initial energy for mol %d: %f\n", static_cast<int>(blockIdx.x), blockEnergy);
+    // }
   }
-  __syncthreads();
-
-  #pragma unroll 1
-  for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
-    localGrad[i] = 0.0;
-  }
-  __syncthreads();
-
+  
+  // Compute initial gradient  
   if constexpr (FFType == ForceFieldType::MMFF) {
     MMFF::molGrad<BLOCK_SIZE>(*terms, *systemIndices, positions, localGrad, molIdx, tid);
   } else if constexpr (FFType == ForceFieldType::ETK) {
@@ -578,7 +578,12 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
                                              fourthDimWeight,
                                              tid);
   }
+  
   __syncthreads();
+
+  // if (tid == 0) {
+  //    printf("Initial grad[0]=%f, grad[%d]=%f\n", localGrad[0], numTerms-1, localGrad[numTerms-1]);
+  // }
 
   // Scale gradients
   if (scaleGrads) {
@@ -586,17 +591,24 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   } else {
     scaleGrad<false>(numTerms, localGrad, gradScale, tempStorage);
   }
+
+  // __syncthreads();
+  // if (tid == 0) {
+  //   printf("After scaling: gradScale=%f, grad[0]=%f, grad[%d]=%f\n",  gradScale, localGrad[0], numTerms-1, localGrad[numTerms-1]);
+  // }
+  
   // Set initial direction as negative gradient
+  // no need to sync before this for localGrad since the access pattern is consistent to scaleGrad
   #pragma unroll 1
   for (int i = tid; i < numTerms; i += BLOCK_SIZE) {
     localDir[i] = -localGrad[i];
   }
-  __syncthreads();
 
-  // Set max step
-  setMaxStep(localPos, numTerms, &maxStep, tempStorage);
-  __syncthreads();
-
+  // __syncthreads();
+  // if (tid == 0) {
+  //   printf("Initial dir[0]=%f, dir[%d]=%f\n", localDir[0], numTerms-1, localDir[numTerms-1]);
+  // }
+  
   // Main BFGS loop
   __shared__ int currIter;
   if (tid == 0) {
@@ -605,39 +617,53 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   __syncthreads();
 
   while (!converged && currIter < numIters) {
+    // if (tid == 0) {
+    //   printf("Iter %d", currIter);
+    // }
     // Save current position before line search
     #pragma unroll 1
     for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
       oldPos[i] = localPos[i];
     }
-    __syncthreads();
 
     // Line search setup
+    __shared__ int16_t lineSearchIter;
     if (tid == 0) {
       lineSearchConverged = false;
+      lineSearchIter      = 0;
       lambda              = 1.0;
     }
+    
     __syncthreads();
 
+    // TODO: look into this func
     lineSearchSetup(numTerms, localPos, localGrad, maxStep, localDir, slope, lambdaMin, tempStorage);
     __syncthreads();
 
     // Line search loop
-    __shared__ int16_t lineSearchIter;
+    __shared__ int lineSearchIter;
     if (tid == 0) {
       lineSearchIter = 0;
     }
     __syncthreads();
 
+    // if (tid == 0) {
+    //   printf("  Line search setup: slope=%f, lambdaMin=%f, lambda=%f\n", slope, lambdaMin, lambda);
+    // }
+
+    // Line search loop
     while (!lineSearchConverged && lineSearchIter < MAX_LINESEARCH_ITERS) {
       // Perturb positions from saved oldPos (not localPos, which may have been modified)
       lineSearchPerturb(numTerms, oldPos, localDir, lambda, scratchPos);
 
       // Copy to global for energy calculation
+      // no need to sync before this for scratchPos since the access pattern is consistent to lineSearchPerturb
+      // TODO: look into using smem pos for energy
       #pragma unroll 1
       for (int i = tid; i < numTerms; i += BLOCK_SIZE) {
         globalPos[i] = scratchPos[i];
       }
+
       __syncthreads();
 
       // Compute energy at perturbed position
@@ -657,19 +683,14 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       }
       const double lsBlockEnergy = BlockReduce(tempStorage).Sum(lsThreadEnergy);
 
+      // Check convergence and update lambda
       if (tid == 0) {
         currE = lsBlockEnergy;
-      }
-      __syncthreads();
-
-      // Check convergence and update lambda
-      lineSearchConverged =
-        lineSearchPostEnergy(lineSearchIter == 0, prevE, currE, slope, lambda, lambdaMin, lambda2, eScratch, lambda);
-      __syncthreads();
-
-      if (tid == 0) {
+        //printf("  Line search iter %d, lambda=%f, energy=%f\n", lineSearchIter, lambda, lsBlockEnergy);
+        lineSearchConverged = lineSearchPostEnergy(lineSearchIter == 0, prevE, currE, slope, lambda, lambdaMin, lambda2, eScratch, lambda);
         lineSearchIter++;
       }
+
       __syncthreads();
     }
 
@@ -679,25 +700,33 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       localPos[i]  = scratchPos[i];
       globalPos[i] = scratchPos[i];
     }
-    __syncthreads();
 
     // Set direction (compute xi = new - old)
     setDirection(numTerms, scratchPos, oldPos, localDir, dGrad, localGrad, converged, tempStorage);
+
+    __syncthreads();
+
     if (converged) {
+      // if (tid == 0) {
+      //   printf("Converged due to small position change.\n");
+      // }
       break;
     }
 
     // Update stored energy for next iteration
     if (tid == 0) {
       prevE = currE;
+      // if (blockIdx.x == 0) {
+      //   printf("Line search result energy: %f\n", currE);
+      // }
     }
-    __syncthreads();
 
     // Compute gradients at new position
     #pragma unroll 1
     for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
       localGrad[i] = 0.0;
     }
+
     __syncthreads();
 
     if constexpr (FFType == ForceFieldType::MMFF) {
@@ -714,9 +743,11 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
                                                fourthDimWeight,
                                                tid);
     }
+
     __syncthreads();
 
     // Scale gradients
+    // Implicit __syncthreads() inside scaleGrad due to BlockReduce and gradScale computation
     if (scaleGrads) {
       scaleGrad<true>(numTerms, localGrad, gradScale, tempStorage);
     } else {
@@ -724,12 +755,20 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     }
 
     // Update dGrad and check convergence
+    // no need to sync before this for localGrad since the access pattern is consistent to scaleGrad
     updateDGrad(numTerms, gradTol, currE, gradScale, localGrad, localPos, dGrad, converged, tempStorage);
+
+    __syncthreads();
+
     if (converged) {
+      // if (tid == 0) {
+      //   printf("Converged due to gradient tolerance.\n");
+      // }
       break;
     }
 
     // Update Hessian and compute new direction (reuses scratchPos as hessDGrad)
+    // TODO: look into this func
     updateInverseHessian(numTerms, invHessian, dGrad, localDir, scratchPos, localGrad, tempStorage);
 
     if (tid == 0) {
