@@ -367,8 +367,8 @@ __device__ void updateInverseHessian(const int                                  
       dGrad[i] = fac * xi[i] - fad * hessDGrad[i];
     }
     __syncthreads();
-
-    // Update inverse Hessian and compute new direction
+    
+    // Update inverse Hessian and compute new direction xi
     #pragma unroll 1
     for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
       double pxi  = fac * xi[row];
@@ -515,16 +515,10 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
 
   // Initialize inverse Hessian to identity
   #pragma unroll 1
-  for (int16_t16_t row = tid; row < numTerms; row += BLOCK_SIZE) {
-    #pragma unroll COL_UNROLL_FACTOR
-    for (int16_t col = 0; col < row; col++) {
-      invHessian[col * numTerms + row] = 0.0;
-    }
-    invHessian[row * numTerms + row] = 1.0;
-    #pragma unroll COL_UNROLL_FACTOR
-    for (int16_t col = row + 1; col < numTerms; col++) {
-      invHessian[col * numTerms + row] = 0.0;
-    }
+  for (int16_t i = tid; i < hessianSize; i += BLOCK_SIZE) {
+    const int16_t row = i / numTerms;
+    const int16_t col = i % numTerms;
+    invHessian[i] = (row == col) ? 1.0 : 0.0;
   }
 
   // Initialize local gradient to 0
