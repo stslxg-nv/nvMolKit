@@ -515,7 +515,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   #pragma unroll 1
   for (int16_t row = tid; row < numTerms; row += BLOCK_SIZE) {
     #pragma unroll COL_UNROLL_FACTOR
-    for (int16_t col = 0; col < row; col++) {
+    for (int16_t col = 0; col < numTerms; col++) {
       invHessian[col * numTerms + row] = 0.0;
     }
     invHessian[row * numTerms + row] = 1.0;
