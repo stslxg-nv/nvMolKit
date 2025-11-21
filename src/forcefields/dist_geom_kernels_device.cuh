@@ -1037,8 +1037,8 @@ static __device__ __inline__ double molEnergyETK(const Energy3DForceContribsDevi
   constexpr int WARP_SIZE = 32;
   auto          tile32    = cg::tiled_partition<WARP_SIZE>(cg::this_thread_block());
   const int     laneId    = tile32.thread_rank();
-  const int     warpId    = tile32.meta_group_rank();
-  const int     numWarps  = tile32.meta_group_size();
+  const int     warpId    = mark_warp_uniform(tile32.meta_group_rank());
+  const int     numWarps  = mark_warp_uniform(tile32.meta_group_size());
 
   // Get term ranges
   const int torsionStart  = systemIndices.experimentalTorsionTermStarts[molIdx];
@@ -1192,13 +1192,13 @@ static __device__ __inline__ double molEnergyETK(const Energy3DForceContribsDevi
   return energy;
 }
 
+template <int stride>
 static __device__ __inline__ void molGradETK(const Energy3DForceContribsDevicePtr& terms,
                                              const BatchedIndices3DDevicePtr&      systemIndices,
                                              const double*                         coords,
                                              double*                               grad,
                                              const int                             molIdx,
-                                             const int                             tid,
-                                             const int                             stride) {
+                                             const int                             tid) {
   const int     atomStart = systemIndices.atomStarts[molIdx];
   const double* molCoords = coords + atomStart * 4;  // ETK uses 4D coordinates
 
@@ -1206,8 +1206,8 @@ static __device__ __inline__ void molGradETK(const Energy3DForceContribsDevicePt
   constexpr int WARP_SIZE = 32;
   auto          tile32    = cg::tiled_partition<WARP_SIZE>(cg::this_thread_block());
   const int     laneId    = tile32.thread_rank();
-  const int     warpId    = tile32.meta_group_rank();
-  const int     numWarps  = tile32.meta_group_size();
+  const int     warpId    = mark_warp_uniform(tile32.meta_group_rank());
+  const int     numWarps  = mark_warp_uniform(tile32.meta_group_size());
 
   // Get term ranges
   const int torsionStart  = systemIndices.experimentalTorsionTermStarts[molIdx];
