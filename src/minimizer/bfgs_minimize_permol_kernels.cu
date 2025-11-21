@@ -368,13 +368,13 @@ __device__ void updateInverseHessian(const int                                  
     }
     __syncthreads();
     
-    // Update inverse Hessian and compute new direction xi
+    // Update inverse Hessian
     #pragma unroll 1
     for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
       double pxi  = fac * xi[row];
       double hdgi = fad * hessDGrad[row];
       double dgi = fae * dGrad[row];
-      double dotProduct = 0.0;
+      // double dotProduct = 0.0;
 
       #pragma unroll COL_UNROLL_FACTOR
       for (int col = 0; col < numTerms; col++) {
@@ -383,24 +383,25 @@ __device__ void updateInverseHessian(const int                                  
         double dgj    = dGrad[col];
         double update = pxi * pxj - hdgi * hdgj + dgi * dgj;
         // invHessian is symmetric, this has better memory coalescing
-        double new_val = invHessian[col * numTerms + row] + update;
-        dotProduct += new_val * grad[col];
-        invHessian[col * numTerms + row] = new_val;
+        // double new_val = invHessian[col * numTerms + row] + update;
+        // dotProduct += new_val * grad[col];
+        // invHessian[col * numTerms + row] = new_val;
+        invHessian[col * numTerms + row] += update;
       }
-      xi[row] = -dotProduct;
+      // xi[row] = -dotProduct;
     }
-  } else {
-    // Update xi = -invHessian * grad only
-    #pragma unroll 1
-    for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
-      double dotProduct = 0.0;
-      #pragma unroll COL_UNROLL_FACTOR
-      for (int col = 0; col < numTerms; col++) {
-        // invHessian is symmetric, this has better memory coalescing
-        dotProduct += invHessian[col * numTerms + row] * grad[col];
-      }
-      xi[row] = -dotProduct;
+    __syncthreads();
+  }
+  // Update xi = -invHessian * grad only
+  #pragma unroll 1
+  for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
+    double dotProduct = 0.0;
+    #pragma unroll COL_UNROLL_FACTOR
+    for (int col = 0; col < numTerms; col++) {
+      // invHessian is symmetric, this has better memory coalescing
+      dotProduct += invHessian[col * numTerms + row] * grad[col];
     }
+    xi[row] = -dotProduct;
   }
 }
 
