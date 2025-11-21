@@ -15,6 +15,7 @@ constexpr int16_t MAX_LINESEARCH_ITERS = 1000;
 constexpr double  FUNCTOL              = 1e-4;
 constexpr double  MOVETOL              = 1e-7;
 constexpr double  TOLX                 = 4. * 3e-8;
+constexpr int COL_UNROLL_FACTOR        = 4;
 
 __device__ void setMaxStep(const double*                                               pos,
                            const int                                                   numTerms,
@@ -124,11 +125,11 @@ __device__ void lineSearchSetup(const int                                       
   }
 }
 
-__device__ __forceinline__ void lineSearchPerturb(const int     numTerms,
-                                                  const double* refPos,
-                                                  const double* dirStart,
-                                                  const float   lambda,
-                                                  double*       scratchPos) {
+__device__ __forceinline__ __forceinline__ void lineSearchPerturb(const int     numTerms,
+                                                                  const double* refPos,
+                                                                  const double* dirStart,
+                                                                  const float   lambda,
+                                                                  double*       scratchPos) {
   #pragma unroll 1
   for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
     scratchPos[i] = refPos[i] + lambda * dirStart[i];
@@ -295,7 +296,7 @@ __device__ void updateInverseHessian(const int                                  
   #pragma unroll 1
   for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
     double dotProduct = 0.0;
-    #pragma unroll 1
+    #pragma unroll COL_UNROLL_FACTOR
     for (int col = 0; col < numTerms; col++) {
       dotProduct += invHessian[row * numTerms + col] * dGrad[col];
     }
@@ -373,7 +374,7 @@ __device__ void updateInverseHessian(const int                                  
       double hdgi = fad * hessDGrad[row];
       double dgi  = fae * dGrad[row];
 
-      #pragma unroll 1
+      #pragma unroll COL_UNROLL_FACTOR
       for (int col = 0; col < numTerms; col++) {
         double pxj    = xi[col];
         double hdgj   = hessDGrad[col];
@@ -389,7 +390,7 @@ __device__ void updateInverseHessian(const int                                  
   #pragma unroll 1
   for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
     double dotProduct = 0.0;
-    #pragma unroll 1
+    #pragma unroll COL_UNROLL_FACTOR
     for (int col = 0; col < numTerms; col++) {
       dotProduct += invHessian[row * numTerms + col] * grad[col];
     }
