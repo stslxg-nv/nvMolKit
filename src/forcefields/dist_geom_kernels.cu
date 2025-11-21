@@ -991,7 +991,6 @@ __global__ void combinedEnergiesKernel(const EnergyForceContribsDevicePtr* terms
                                        const uint8_t*                      activeThisStage) {
   const int molIdx = blockIdx.x;
   const int tid    = threadIdx.x;
-  const int stride = blockSizePerMol;
 
   if (activeThisStage != nullptr && activeThisStage[molIdx] == 0) {
     if (tid == 0) {
@@ -1022,7 +1021,6 @@ __global__ void combinedGradKernel(const EnergyForceContribsDevicePtr* terms,
                                    const uint8_t*                      activeThisStage) {
   const int molIdx = blockIdx.x;
   const int tid    = threadIdx.x;
-  const int stride = blockDim.x;
 
   if (activeThisStage != nullptr && activeThisStage[molIdx] == 0) {
     return;
@@ -1039,18 +1037,18 @@ __global__ void combinedGradKernel(const EnergyForceContribsDevicePtr* terms,
   double*    molGradBase  = useSharedMem ? accumGrad : grad + atomStart * dimension;
 
   #pragma unroll 1
-  for (int i = tid; i < numAtoms * dimension; i += stride) {
+  for (int i = tid; i < numAtoms * dimension; i += blockSizePerMol) {
     molGradBase[i] = 0.0;
   }
   __syncthreads();
 
-  molGradDG(*terms, *systemIndices, coords, molGradBase, molIdx, dimension, chiralWeight, fourthDimWeight, tid, stride);
+  molGradDG<blockSizePerMol>(*terms, *systemIndices, coords, molGradBase, molIdx, dimension, chiralWeight, fourthDimWeight, tid);
   __syncthreads();
 
   if (useSharedMem) {
     double* globalGrad = grad + (atomStart * dimension);
     #pragma unroll 1
-    for (int i = tid; i < numAtoms * dimension; i += stride) {
+    for (int i = tid; i < numAtoms * dimension; i += blockSizePerMol) {
       globalGrad[i] = molGradBase[i];
     }
   }

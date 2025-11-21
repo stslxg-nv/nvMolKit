@@ -763,13 +763,13 @@ static __device__ __inline__ double molEnergy(const EnergyForceContribsDevicePtr
   return energy;
 }
 
+template <int stride>
 static __device__ __inline__ void molGrad(const EnergyForceContribsDevicePtr& terms,
                                           const BatchedIndicesDevicePtr&      systemIndices,
                                           const double*                       coords,
                                           double*                             grad,
                                           const int                           molIdx,
-                                          const int                           tid,
-                                          const int                           stride) {
+                                          const int                           tid) {
   const int     atomStart = systemIndices.atomStarts[molIdx];
   const double* molCoords = coords + atomStart * 3;
 

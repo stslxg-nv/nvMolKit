@@ -930,6 +930,7 @@ static __device__ __inline__ double molEnergyDG(const EnergyForceContribsDeviceP
 }
 
 // Consolidated per-molecule gradient calculation
+template <int stride>
 static __device__ __inline__ void molGradDG(const EnergyForceContribsDevicePtr& terms,
                                             const BatchedIndicesDevicePtr&      systemIndices,
                                             const double*                       coords,
@@ -938,8 +939,7 @@ static __device__ __inline__ void molGradDG(const EnergyForceContribsDevicePtr& 
                                             const int                           dimension,
                                             const double                        chiralWeight,
                                             const double                        fourthDimWeight,
-                                            const int                           tid,
-                                            const int                           stride) {
+                                            const int                           tid) {
   const int     atomStart = systemIndices.atomStarts[molIdx];
   const double* molCoords = coords + atomStart * dimension;
   double*       molGrad   = grad;  // grad is already offset by caller (see combinedGradKernel)
