@@ -691,6 +691,7 @@ __global__ void combinedGradKernel(const EnergyForceContribsDevicePtr* terms,
   const bool useSharedMem = numAtoms <= maxAtomSize;
   double*    molGradBase  = useSharedMem ? accumGrad : grad + atomStart * 3;
 
+  #pragma unroll 1
   for (int i = tid; i < numAtoms * 3; i += blockSizePerMol) {
     molGradBase[i] = 0.0;
   }
@@ -701,6 +702,7 @@ __global__ void combinedGradKernel(const EnergyForceContribsDevicePtr* terms,
 
   if (useSharedMem) {
     double* globalGrad = grad + (atomStart * 3);
+    #pragma unroll 1
     for (int i = tid; i < numAtoms * 3; i += blockSizePerMol) {
       globalGrad[i] = molGradBase[i];
     }

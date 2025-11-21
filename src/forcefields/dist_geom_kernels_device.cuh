@@ -1089,6 +1089,7 @@ static __device__ __inline__ double molEnergyETK(const Energy3DForceContribsDevi
     warpsForTorsion + warpsForImproper + warpsForDist12 + warpsForDist13 + warpsForAngle13 + warpsForDistLR;
 
   // Each warp processes chunks in round-robin fashion
+  #pragma unroll 1
   for (int chunkIdx = warpId; chunkIdx < totalWarpsNeeded; chunkIdx += numWarps) {
     // Determine which term type this chunk belongs to
     if (chunkIdx < warpsForTorsion) {
@@ -1257,6 +1258,7 @@ static __device__ __inline__ void molGradETK(const Energy3DForceContribsDevicePt
     warpsForTorsion + warpsForImproper + warpsForDist12 + warpsForDist13 + warpsForAngle13 + warpsForDistLR;
 
   // Each warp processes chunks in round-robin fashion
+  #pragma unroll 1
   for (int chunkIdx = warpId; chunkIdx < totalWarpsNeeded; chunkIdx += numWarps) {
     // Determine which term type this chunk belongs to
     if (chunkIdx < warpsForTorsion) {
