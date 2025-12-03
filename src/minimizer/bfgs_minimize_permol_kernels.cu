@@ -436,6 +436,15 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
                                    int16_t*                statuses,
                                    [[maybe_unused]] double chiralWeight,
                                    [[maybe_unused]] double fourthDimWeight) {
+  int64_t line_search_total_time = 0, hessian_update_total_time = 0, gradient_total_time = 0;
+  int64_t start_time = 0;
+  int64_t total_start_time = 0;
+
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    total_start_time = clock64();
+  }
+  __threadfence_block();
+
   const int     molIdx = molIdList[blockIdx.x];
   const int16_t tid    = threadIdx.x;
 
@@ -641,6 +650,11 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     
     __syncthreads();
 
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+      start_time = clock64();
+    }
+    __threadfence_block();
+
     // TODO: look into this func
     lineSearchSetup(numTerms, localPos, localGrad, maxStep, localDir, slope, lambdaMin, tempStorage);
 
@@ -705,6 +719,12 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
 
     __syncthreads();
 
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+      line_search_total_time += clock64() - start_time;
+      start_time = clock64();
+    }
+    __threadfence_block();
+
     if (converged) {
       // if (tid == 0) {
       //   printf("Converged due to small position change.\n");
@@ -759,6 +779,12 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
 
     __syncthreads();
 
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+      gradient_total_time += clock64() - start_time;
+      start_time = clock64();
+    }
+    __threadfence_block();
+
     if (converged) {
       // if (tid == 0) {
       //   printf("Converged due to gradient tolerance.\n");
@@ -774,6 +800,19 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       currIter++;
     }
     __syncthreads();
+
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+      hessian_update_total_time += clock64() - start_time;
+    }
+    __threadfence_block();
+  }
+
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    int64_t total_time = clock64() - total_start_time;
+    printf("Total time: %lld cycles\n", total_time);
+    printf("Line search total time: %lld cycles, %f %% \n", line_search_total_time, (double)line_search_total_time / total_time * 100);
+    printf("Gradient total time: %lld cycles, %f %% \n", gradient_total_time, (double)gradient_total_time / total_time * 100);
+    printf("Hessian update total time: %lld cycles, %f %% \n", hessian_update_total_time, (double)hessian_update_total_time / total_time * 100);
   }
 
   // Write final energy and status
