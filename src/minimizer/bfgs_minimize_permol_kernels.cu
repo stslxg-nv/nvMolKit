@@ -511,16 +511,6 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     }
   }
 
-  // Initialize inverse Hessian to identity
-  #pragma unroll 1
-  for (int16_t row = tid; row < numTerms; row += BLOCK_SIZE) {
-    #pragma unroll COL_UNROLL_FACTOR
-    for (int16_t col = 0; col < numTerms; col++) {
-      invHessian[col * numTerms + row] = 0.0;
-    }
-    invHessian[row * numTerms + row] = 1.0;
-  }
-
   // Initialize local gradient to 0
   #pragma unroll 1
   for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
