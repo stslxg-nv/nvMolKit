@@ -519,10 +519,6 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       invHessian[col * numTerms + row] = 0.0;
     }
     invHessian[row * numTerms + row] = 1.0;
-    #pragma unroll COL_UNROLL_FACTOR
-    for (int16_t col = row + 1; col < numTerms; col++) {
-      invHessian[col * numTerms + row] = 0.0;
-    }
   }
 
   // Initialize local gradient to 0
