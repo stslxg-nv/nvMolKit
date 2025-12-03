@@ -443,7 +443,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     total_start_time = clock64();
   }
-  __threadfence_block();
+  __syncthreads();
 
   const int     molIdx = molIdList[blockIdx.x];
   const int16_t tid    = threadIdx.x;
@@ -653,7 +653,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     if (blockIdx.x == 0 && threadIdx.x == 0) {
       start_time = clock64();
     }
-    __threadfence_block();
+    __syncthreads();
 
     // TODO: look into this func
     lineSearchSetup(numTerms, localPos, localGrad, maxStep, localDir, slope, lambdaMin, tempStorage);
@@ -695,7 +695,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
                                                                     tid);
       }
       const double lsBlockEnergy = BlockReduce(tempStorage).Sum(lsThreadEnergy);
-
+      
       // Check convergence and update lambda
       if (tid == 0) {
         currE = lsBlockEnergy;
@@ -723,7 +723,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       line_search_total_time += clock64() - start_time;
       start_time = clock64();
     }
-    __threadfence_block();
+    __syncthreads();
 
     if (converged) {
       // if (tid == 0) {
@@ -783,7 +783,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       gradient_total_time += clock64() - start_time;
       start_time = clock64();
     }
-    __threadfence_block();
+    __syncthreads();
 
     if (converged) {
       // if (tid == 0) {
@@ -804,7 +804,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     if (blockIdx.x == 0 && threadIdx.x == 0) {
       hessian_update_total_time += clock64() - start_time;
     }
-    __threadfence_block();
+    __syncthreads();
   }
 
   if (blockIdx.x == 0 && threadIdx.x == 0) {
