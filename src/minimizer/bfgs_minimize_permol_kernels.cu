@@ -808,6 +808,13 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   }
 
   if (blockIdx.x == 0 && threadIdx.x == 0) {
+    if constexpr (FFType == ForceFieldType::MMFF) {
+      printf("MMFF:\n");
+    } else if constexpr (FFType == ForceFieldType::ETK) {
+      printf("ETK:\n");
+    } else {  // DG
+      printf("DG:\n");
+    }
     int64_t total_time = clock64() - total_start_time;
     printf("Total time: %lld cycles\n", total_time);
     printf("Line search total time: %lld cycles, %f %% \n", line_search_total_time, (double)line_search_total_time / total_time * 100);
