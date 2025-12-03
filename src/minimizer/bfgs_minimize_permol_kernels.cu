@@ -1,3 +1,5 @@
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
 #include <cub/cub.cuh>
 
 #include "bfgs_minimize_permol_kernels.h"
@@ -7,10 +9,14 @@
 #include "mmff_kernels.h"
 #include "mmff_kernels_device.cuh"
 
+namespace cg = cooperative_groups;
+
 namespace nvMolKit {
 
 namespace {
 constexpr int16_t BLOCK_SIZE           = 128;
+constexpr int16_t WARP_SIZE            = 32;
+constexpr int16_t NUM_WARPS             = BLOCK_SIZE / WARP_SIZE;
 constexpr int16_t MAX_LINESEARCH_ITERS = 1000;
 constexpr double  FUNCTOL              = 1e-4;
 constexpr double  MOVETOL              = 1e-7;
@@ -292,17 +298,24 @@ __device__ void updateInverseHessian(const int                                  
                                      typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage) {
   using BlockReduce = cub::BlockReduce<double, BLOCK_SIZE>;
 
+  cg::thread_block                 block           = cg::this_thread_block();
+  cg::thread_block_tile<WARP_SIZE> warp            = cg::tiled_partition<WARP_SIZE>(block);
+  const int                        idxWithinSystem = threadIdx.x;
+  const int                        warpIdx         = mark_warp_uniform(idxWithinSystem / WARP_SIZE);
+  const int                        laneIdx         = idxWithinSystem % WARP_SIZE;
+
   // Compute hessDGrad = invHessian * dGrad
   #pragma unroll 1
-  for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
+  for (int row = warpIdx; row < numTerms; row += NUM_WARPS) {
     double dotProduct = 0.0;
     #pragma unroll COL_UNROLL_FACTOR
-    for (int col = 0; col < numTerms; col++) {
+    for (int col = laneIdx; col < numTerms; col += WARP_SIZE) {
       // invHessian is symmetric, this has better memory coalescing
       dotProduct += invHessian[col * numTerms + row] * dGrad[col];
     }
-    hessDGrad[row] = dotProduct;
+    cg::reduce_store_async(warp, &hessDGrad[row], dotProduct, cg::plus<double>{});
   }
+
   __syncthreads();
 
   // Compute BFGS sums
@@ -310,43 +323,29 @@ __device__ void updateInverseHessian(const int                                  
   __shared__ bool   needUpdate;
 
   double sumFac = 0.0;
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    sumFac += dGrad[i] * xi[i];
+  double sumTerm = 0.0;
+  if (warpIdx == 0) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      sumTerm += dGrad[i] * xi[i];
+    }
+    cg::reduce_store_async(warp, &fac, sumTerm, cg::plus<double>{});
+  } else if (warpIdx == 1) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      sumTerm += dGrad[i] * hessDGrad[i];
+    }
+    cg::reduce_store_async(warp, &fae, sumTerm, cg::plus<double>{});
+  } else if (warpIdx == 2) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      sumTerm += dGrad[i] * dGrad[i];
+    }
+    cg::reduce_store_async(warp, &sumDGrad, sumTerm, cg::plus<double>{});
+  } else if (warpIdx == 3) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      sumTerm += xi[i] * xi[i];
+    }
+    cg::reduce_store_async(warp, &sumXi, sumTerm, cg::plus<double>{});
   }
-  double facReduced = BlockReduce(tempStorage).Sum(sumFac);
-  if (threadIdx.x == 0)
-    fac = facReduced;
-  __syncthreads();
 
-  double sumFae = 0.0;
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    sumFae += dGrad[i] * hessDGrad[i];
-  }
-  double faeReduced = BlockReduce(tempStorage).Sum(sumFae);
-  if (threadIdx.x == 0)
-    fae = faeReduced;
-  __syncthreads();
-
-  double sumDGradSq = 0.0;
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    sumDGradSq += dGrad[i] * dGrad[i];
-  }
-  double sumDGradReduced = BlockReduce(tempStorage).Sum(sumDGradSq);
-  if (threadIdx.x == 0)
-    sumDGrad = sumDGradReduced;
-  __syncthreads();
-
-  double sumXiSq = 0.0;
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    sumXiSq += xi[i] * xi[i];
-  }
-  double sumXiReduced = BlockReduce(tempStorage).Sum(sumXiSq);
-  if (threadIdx.x == 0)
-    sumXi = sumXiReduced;
   __syncthreads();
 
   if (threadIdx.x == 0) {
