@@ -643,13 +643,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
 
     // TODO: look into this func
     lineSearchSetup(numTerms, localPos, localGrad, maxStep, localDir, slope, lambdaMin, tempStorage);
-    __syncthreads();
 
-    // Line search loop
-    __shared__ int lineSearchIter;
-    if (tid == 0) {
-      lineSearchIter = 0;
-    }
     __syncthreads();
 
     // if (tid == 0) {
