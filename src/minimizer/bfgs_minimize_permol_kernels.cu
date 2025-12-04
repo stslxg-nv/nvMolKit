@@ -25,20 +25,21 @@ constexpr double  TOLX                 = 4. * 3e-8;
 __device__ void setMaxStep(const double*                                               pos,
                            const int                                                   numTerms,
                            float*                                                      maxStepOutSquared,
-                           typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage) {
+                           const cg::thread_block_tile<WARP_SIZE>&                     warp,
+                           const int16_t                                               warpIdx,
+                           const int16_t                                               laneIdx) {
   float sumSquaredPos = 0.0;
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    float dx2 = pos[i] * pos[i];
-    sumSquaredPos += dx2;
-  }
-  using BlockReduce = cub::BlockReduce<double, BLOCK_SIZE>;
-
-  const float squaredSum = BlockReduce(tempStorage).Sum(sumSquaredPos);
-  if (threadIdx.x == 0) {
-    constexpr float maxStepFactorSquared = 100.0 * 100.0;
-    *maxStepOutSquared =
-      maxStepFactorSquared * max(squaredSum, static_cast<float>(numTerms) * static_cast<float>(numTerms));
+  if (warpIdx == 0) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      float dx2 = pos[i] * pos[i];
+      sumSquaredPos += dx2;
+    }
+    const float squaredSum = cg::reduce(warp, sumSquaredPos, cg::plus<float>{});
+    if (threadIdx.x == 0) {
+      constexpr float maxStepFactorSquared = 100.0 * 100.0;
+      *maxStepOutSquared =
+        maxStepFactorSquared * max(squaredSum, static_cast<float>(numTerms) * static_cast<float>(numTerms));
+    }
   }
 }
 
@@ -49,84 +50,68 @@ __device__ void lineSearchSetup(const int                                       
                                 double*                                                     dirStart,
                                 double&                                                     slope,
                                 double&                                                     lambdaMin,
-                                typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage) {
-  const int idxInSys = threadIdx.x;
-  using BlockReduce  = cub::BlockReduce<double, BLOCK_SIZE>;
-  __shared__ float dirSumSquared;
-
-  // ---------------------------------
-  //  Scale direction vector if needed
-  // ---------------------------------
+                                const cg::thread_block_tile<WARP_SIZE>&                     warp,
+                                const int16_t                                               warpIdx,
+                                const int16_t                                               laneIdx) {
   float sumSquaredLocal = 0.0;
-  #pragma unroll 1
-  for (int i = idxInSys; i < numTerms; i += BLOCK_SIZE) {
-    float dx2 = dirStart[i] * dirStart[i];
-    sumSquaredLocal += dx2;
-  }
-  float blockSum = BlockReduce(tempStorage).Sum(sumSquaredLocal);
-  if (idxInSys == 0) {
-    dirSumSquared = blockSum;
-  }
-  __syncthreads();
-  if (dirSumSquared > maxStepSquared) {
-    const float inverseScaleSquared = dirSumSquared / maxStepSquared;
-    const float scale               = rsqrtf(inverseScaleSquared);
-    #pragma unroll 1
-    for (int i = idxInSys; i < numTerms; i += BLOCK_SIZE) {
-      dirStart[i] *= scale;
+  if (warpIdx == 0) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      float dx2 = dirStart[i] * dirStart[i];
+      sumSquaredLocal += dx2;
     }
-  }
-  __syncthreads();
+    float warpSum = cg::reduce(warp, sumSquaredLocal, cg::plus<float>{});
+    
+    // ---------------------------------
+    //  Scale direction vector if needed
+    // ---------------------------------
 
-  // -------------------------
-  // Set slope, check validity
-  // -------------------------
-  float localSum     = 0.0;
-  float localGradSum = 0.0;
-  float localDirSum  = 0.0;
-  // Each thread computes its partial sum
-  #pragma unroll 1
-  for (int i = idxInSys; i < numTerms; i += BLOCK_SIZE) {
-    localSum += dirStart[i] * gradStart[i];
-    localGradSum += gradStart[i] * gradStart[i];
-    localDirSum += dirStart[i] * dirStart[i];
-  }
-
-  // Perform block-wide reduction to compute the total sum
-  blockSum = BlockReduce(tempStorage).Sum(localSum);
-
-  // The first thread in the block writes the result
-  if (idxInSys == 0) {
-    slope = blockSum;
-  }
-  __syncthreads();
-
-  // ----------------------
-  // Compute initial lambda
-  // ----------------------
-  float localMax_numerator   = 0.0;
-  float localMax_denominator = 1.0;
-  // Each thread computes its local maximum
-  #pragma unroll 1
-  for (int i = idxInSys; i < numTerms; i += BLOCK_SIZE) {
-    float temp_numerator   = fabs(dirStart[i]);
-    float temp_denominator = fmax(fabs(posStart[i]), 1.0);
-    // temp_numerator / temp_denominator > localMax_numerator / localMax_denominator
-    // <=>
-    // temp_numerator * localMax_denominator > localMax_numerator * temp_denominator
-    if (temp_numerator * localMax_denominator > localMax_numerator * temp_denominator) {
-      localMax_numerator   = temp_numerator;
-      localMax_denominator = temp_denominator;
+    if (warpSum > maxStepSquared) {
+      const float inverseScaleSquared = warpSum / maxStepSquared;
+      const float scale               = rsqrtf(inverseScaleSquared);
+      for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+        dirStart[i] *= scale;
+      }
     }
-  }
 
-  float localInvMax = localMax_denominator / (localMax_numerator > 0.0f ? localMax_numerator : 1.0e-20f);
-  // Perform block-wide reduction to find the maximum
-  float blockInvMax = BlockReduce(tempStorage).Reduce(static_cast<double>(localInvMax), cubMin());
+    // -------------------------
+    // Set slope, check validity
+    // -------------------------
+    float localSum     = 0.0;
+    // Each thread computes its partial sum
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      localSum += dirStart[i] * gradStart[i];
+    }
+    
+    warpSum = cg::reduce(warp, localSum, cg::plus<float>{});
+    // The first thread in the block writes the result
+    if (threadIdx.x == 0) {
+      slope = warpSum;
+    }
 
-  // The first thread in the block writes the result
-  if (threadIdx.x == 0) {
-    lambdaMin = static_cast<float>(MOVETOL) * blockInvMax;
+    // ----------------------
+    // Compute initial lambda
+    // ----------------------
+    float localMax_numerator   = 0.0;
+    float localMax_denominator = 1.0;
+    // Each thread computes its local maximum
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      float temp_numerator   = fabs(dirStart[i]);
+      float temp_denominator = fmax(fabs(posStart[i]), 1.0);
+      // temp_numerator / temp_denominator > localMax_numerator / localMax_denominator
+      // <=>
+      // temp_numerator * localMax_denominator > localMax_numerator * temp_denominator
+      if (temp_numerator * localMax_denominator > localMax_numerator * temp_denominator) {
+        localMax_numerator   = temp_numerator;
+        localMax_denominator = temp_denominator;
+      }
+    }
+
+    float localInvMax = localMax_denominator / (localMax_numerator > 0.0f ? localMax_numerator : 1.0e-20f);
+    float warpInvMax = cg::reduce(warp, localInvMax, cg::less<float>{});
+    // The first thread in the block writes the result
+    if (threadIdx.x == 0) {
+      lambdaMin = static_cast<float>(MOVETOL) * warpInvMax;
+    }
   }
 }
 
@@ -134,10 +119,13 @@ __device__ __forceinline__ void lineSearchPerturb(const int     numTerms,
                                                   const double* refPos,
                                                   const double* dirStart,
                                                   const float   lambda,
-                                                  double*       scratchPos) {
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    scratchPos[i] = refPos[i] + lambda * dirStart[i];
+                                                  double*       scratchPos,
+                                                  const int16_t warpIdx,
+                                                  const int16_t laneIdx) {
+  if (warpIdx == 0) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      scratchPos[i] = refPos[i] + lambda * dirStart[i];
+    }
   }
 }
 
@@ -192,30 +180,33 @@ __device__ void setDirection(const int                                          
                              double*                                                     dGrad,
                              const double*                                               grad,
                              bool&                                                       converged,
-                             typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage) {
+                             const cg::thread_block_tile<WARP_SIZE>&                     warp,
+                             const int16_t                                               warpIdx,
+                             const int16_t                                               laneIdx) {
   float localMax_numerator   = 0.0;
   float localMax_denominator = 1.0;
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    xi[i]    = posFromLineSearch[i] - pos[i];
-    dGrad[i] = grad[i];
+  if (warpIdx == 0) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      xi[i]    = posFromLineSearch[i] - pos[i];
+      dGrad[i] = grad[i];
 
-    float temp_numerator   = fabs(xi[i]);
-    float temp_denominator = fmax(fabs(posFromLineSearch[i]), 1.0);
-    // temp_numerator / temp_denominator > localMax_numerator / localMax_denominator
-    // <=>
-    // temp_numerator * localMax_denominator > localMax_numerator * temp_denominator
-    if (temp_numerator * localMax_denominator > localMax_numerator * temp_denominator) {
-      localMax_numerator   = temp_numerator;
-      localMax_denominator = temp_denominator;
+      float temp_numerator   = fabs(xi[i]);
+      float temp_denominator = fmax(fabs(posFromLineSearch[i]), 1.0);
+      // temp_numerator / temp_denominator > localMax_numerator / localMax_denominator
+      // <=>
+      // temp_numerator * localMax_denominator > localMax_numerator * temp_denominator
+      if (temp_numerator * localMax_denominator > localMax_numerator * temp_denominator) {
+        localMax_numerator   = temp_numerator;
+        localMax_denominator = temp_denominator;
+      }
     }
-  }
 
-  float localMax = localMax_numerator / localMax_denominator;
-  float blockMax = cub::BlockReduce<double, BLOCK_SIZE>(tempStorage).Reduce(localMax, cubMax());
+    float localMax = localMax_numerator / localMax_denominator;
+    float warpMax = cg::reduce(warp, localMax, cg::greater<float>{});
 
-  if (threadIdx.x == 0 && blockMax < TOLX) {
-    converged = true;
+    if (threadIdx.x == 0 && warpMax < TOLX) {
+      converged = true;
+    }
   }
 }
 
@@ -223,38 +214,35 @@ template <bool scaleGrads>
 __device__ void scaleGrad(const int                                                   numTerms,
                           double*                                                     grad,
                           double&                                                     gradScale,
-                          typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage) {
+                          const cg::thread_block_tile<WARP_SIZE>&                     warp,
+                          const int16_t                                               warpIdx,
+                          const int16_t                                               laneIdx) {
   gradScale = scaleGrads ? 0.1 : 1.0;
 
   double maxGrad = -1e8;
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    if constexpr (scaleGrads) {
-      grad[i] *= gradScale;
+  if (warpIdx == 0) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      if constexpr (scaleGrads) {
+        grad[i] *= gradScale;
+      }
+      if (grad[i] > maxGrad) {
+        maxGrad = grad[i];
+      }
     }
-    if (grad[i] > maxGrad) {
-      maxGrad = grad[i];
-    }
-  }
 
-  double blockMax = cub::BlockReduce<double, BLOCK_SIZE>(tempStorage).Reduce(maxGrad, cubMax());
+    double warpMax = cg::reduce(warp, maxGrad, cg::greater<double>{});
 
-  __shared__ bool needMoreScale;
-  if (threadIdx.x == 0) {
-    needMoreScale = scaleGrads && (blockMax > 10.0);
-    if (needMoreScale) {
-      while (blockMax * gradScale > 10.0) {
+    bool needMoreScale = scaleGrads && (warpMax > 10.0);
+    if (threadIdx.x == 0 && needMoreScale) {
+      while (warpMax * gradScale > 10.0) {
         gradScale *= 0.5;
       }
     }
-  }
 
-  __syncthreads();
-
-  if (needMoreScale) {
-    #pragma unroll 1
-    for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-      grad[i] *= gradScale;
+    if (needMoreScale) {
+      for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+        grad[i] *= gradScale;
+      }
     }
   }
 }
@@ -267,23 +255,26 @@ __device__ void updateDGrad(const int                                           
                             const double*                                               pos,
                             double*                                                     dGrad,
                             bool&                                                       converged,
-                            typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage) {
+                            const cg::thread_block_tile<WARP_SIZE>&                     warp,
+                            const int16_t                                               warpIdx,
+                            const int16_t                                               laneIdx) {
   double localMax = 0.0;
-  #pragma unroll 1
-  for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
-    dGrad[i]    = grad[i] - dGrad[i];
-    double temp = fabs(grad[i]) * fmax(fabs(pos[i]), 1.0);
-    if (temp > localMax) {
-      localMax = temp;
+  if (warpIdx == 0) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      dGrad[i]    = grad[i] - dGrad[i];
+      double temp = fabs(grad[i]) * fmax(fabs(pos[i]), 1.0);
+      if (temp > localMax) {
+        localMax = temp;
+      }
     }
-  }
 
-  float blockMax = cub::BlockReduce<double, BLOCK_SIZE>(tempStorage).Reduce(localMax, cubMax());
+    float warpMax = cg::reduce(warp, localMax, cg::greater<double>{});
 
-  if (threadIdx.x == 0) {
-    const float term = max(energy * gradScale, 1.0);
-    if (blockMax < gradTol * term) {
-      converged = true;
+    if (threadIdx.x == 0) {
+      const float term = max(energy * gradScale, 1.0);
+      if (warpMax < gradTol * term) {
+        converged = true;
+      }
     }
   }
 }
@@ -294,7 +285,7 @@ __device__ void updateInverseHessian(const int                                  
                                      double*                                                     xi,
                                      double*                                                     hessDGrad,
                                      double*                                                     grad,
-                                     typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage,
+                                     const cg::thread_block&                                     block,
                                      const cg::thread_block_tile<WARP_SIZE>&                     warp,
                                      const int16_t                                               warpIdx,
                                      const int16_t                                              laneIdx) {
@@ -311,7 +302,7 @@ __device__ void updateInverseHessian(const int                                  
     cg::reduce_store_async(warp, &hessDGrad[row], dotProduct, cg::plus<double>{});
   }
 
-  __syncthreads();
+  block.sync();
 
   // Compute BFGS sums
   __shared__ double fac, fae, fad, sumDGrad, sumXi;
@@ -340,7 +331,7 @@ __device__ void updateInverseHessian(const int                                  
     cg::reduce_store_async(warp, &sumXi, sumTerm, cg::plus<double>{});
   }
 
-  __syncthreads();
+  block.sync();
 
   if (threadIdx.x == 0) {
     constexpr double EPS = 3e-8;
@@ -351,14 +342,14 @@ __device__ void updateInverseHessian(const int                                  
       fad = 1.0 / fae;
     }
   }
-  __syncthreads();
+  block.sync();
 
   if (needUpdate) {
     // Update dGrad for Hessian update
     for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
       dGrad[i] = fac * xi[i] - fad * hessDGrad[i];
     }
-    __syncthreads();
+    block.sync();
     
     // Update inverse Hessian
     for (int row = warpIdx; row < numTerms; row += NUM_WARPS) {
@@ -376,7 +367,7 @@ __device__ void updateInverseHessian(const int                                  
     }
 
     // cannot remove this sync due to xi update
-    __syncthreads();
+    block.sync();
   }
 
   // Update xi = -invHessian * grad only
@@ -496,16 +487,18 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   // For shared memory case, copy to local shared buffer
   // For non-shared case, localPos already points to globalPos, so no copy needed
   if constexpr (UseSharedMem) {
-    #pragma unroll 1
-    for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
-      localPos[i] = globalPos[i];
+    if (warpIdx == 0) {
+      for (int16_t i = laneIdx; i < numTerms; i += WARP_SIZE) {
+        localPos[i] = globalPos[i];
+      }
     }
   }
 
   // Initialize local gradient to 0
-  #pragma unroll 1
-  for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
-    localGrad[i] = 0.0;
+  if (warpIdx == 0) {
+    for (int16_t i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      localGrad[i] = 0.0;
+    }
   }
 
   if (tid == 0) {
@@ -517,12 +510,14 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   __shared__ typename BlockReduce::TempStorage tempStorage;
 
   // Set max step
-  // Implicit __syncthreads() inside setMaxStep due to BlockReduce
   // no need to sync before this for localPos since the access pattern is consistent
-  setMaxStep(localPos, numTerms, &maxStep, tempStorage);
+  setMaxStep(localPos, numTerms, &maxStep, warp, warpIdx, laneIdx);
   // if (tid == 0) {
   //   printf("maxStep=%f\n", maxStep);
   // }
+
+
+  block.sync();
 
   // Compute initial energy
   double threadEnergy;
@@ -573,9 +568,9 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
 
   // Scale gradients
   if (scaleGrads) {
-    scaleGrad<true>(numTerms, localGrad, gradScale, tempStorage);
+    scaleGrad<true>(numTerms, localGrad, gradScale, warp, warpIdx, laneIdx);
   } else {
-    scaleGrad<false>(numTerms, localGrad, gradScale, tempStorage);
+    scaleGrad<false>(numTerms, localGrad, gradScale, warp, warpIdx, laneIdx);
   }
 
   // block.sync();
@@ -585,9 +580,10 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   
   // Set initial direction as negative gradient
   // no need to sync before this for localGrad since the access pattern is consistent to scaleGrad
-  #pragma unroll 1
-  for (int i = tid; i < numTerms; i += BLOCK_SIZE) {
-    localDir[i] = -localGrad[i];
+  if (warpIdx == 0) {
+    for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+      localDir[i] = -localGrad[i];
+    }
   }
 
   // block.sync();
@@ -607,9 +603,10 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     //   printf("Iter %d", currIter);
     // }
     // Save current position before line search
-    #pragma unroll 1
-    for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
-      oldPos[i] = localPos[i];
+    if (warpIdx == 0) {
+      for (int16_t i = laneIdx; i < numTerms; i += WARP_SIZE) {
+        oldPos[i] = localPos[i];
+      }
     }
 
     // Line search setup
@@ -619,13 +616,8 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       lineSearchIter      = 0;
       lambda              = 1.0;
     }
-    
-    block.sync();
 
-    // TODO: look into this func
-    lineSearchSetup(numTerms, localPos, localGrad, maxStep, localDir, slope, lambdaMin, tempStorage);
-
-    block.sync();
+    lineSearchSetup(numTerms, localPos, localGrad, maxStep, localDir, slope, lambdaMin, warp, warpIdx, laneIdx);
 
     // if (tid == 0) {
     //   printf("  Line search setup: slope=%f, lambdaMin=%f, lambda=%f\n", slope, lambdaMin, lambda);
@@ -634,14 +626,15 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     // Line search loop
     while (!lineSearchConverged && lineSearchIter < MAX_LINESEARCH_ITERS) {
       // Perturb positions from saved oldPos (not localPos, which may have been modified)
-      lineSearchPerturb(numTerms, oldPos, localDir, lambda, scratchPos);
+      lineSearchPerturb(numTerms, oldPos, localDir, lambda, scratchPos, warpIdx, laneIdx);
 
       // Copy to global for energy calculation
       // no need to sync before this for scratchPos since the access pattern is consistent to lineSearchPerturb
       // TODO: look into using smem pos for energy
-      #pragma unroll 1
-      for (int i = tid; i < numTerms; i += BLOCK_SIZE) {
-        globalPos[i] = scratchPos[i];
+      if (warpIdx == 0) {
+        for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+          globalPos[i] = scratchPos[i];
+        }
       }
 
       block.sync();
@@ -675,14 +668,15 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     }
 
     // Update positions with final line search result and compute direction
-    #pragma unroll 1
-    for (int i = tid; i < numTerms; i += BLOCK_SIZE) {
-      localPos[i]  = scratchPos[i];
-      globalPos[i] = scratchPos[i];
+    if (warpIdx == 0) {
+      for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
+        localPos[i]  = scratchPos[i];
+        globalPos[i] = scratchPos[i];
+      }
     }
 
     // Set direction (compute xi = new - old)
-    setDirection(numTerms, scratchPos, oldPos, localDir, dGrad, localGrad, converged, tempStorage);
+    setDirection(numTerms, scratchPos, oldPos, localDir, dGrad, localGrad, converged, warp, warpIdx, laneIdx);
 
     block.sync();
 
@@ -702,9 +696,10 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     }
 
     // Compute gradients at new position
-    #pragma unroll 1
-    for (int16_t i = tid; i < numTerms; i += BLOCK_SIZE) {
-      localGrad[i] = 0.0;
+    if (warpIdx == 0) {
+      for (int16_t i = laneIdx; i < numTerms; i += WARP_SIZE) {
+        localGrad[i] = 0.0;
+      }
     }
 
     block.sync();
@@ -729,14 +724,14 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     // Scale gradients
     // Implicit block.sync() inside scaleGrad due to BlockReduce and gradScale computation
     if (scaleGrads) {
-      scaleGrad<true>(numTerms, localGrad, gradScale, tempStorage);
+      scaleGrad<true>(numTerms, localGrad, gradScale, warp, warpIdx, laneIdx);
     } else {
-      scaleGrad<false>(numTerms, localGrad, gradScale, tempStorage);
+      scaleGrad<false>(numTerms, localGrad, gradScale, warp, warpIdx, laneIdx);
     }
 
     // Update dGrad and check convergence
     // no need to sync before this for localGrad since the access pattern is consistent to scaleGrad
-    updateDGrad(numTerms, gradTol, currE, gradScale, localGrad, localPos, dGrad, converged, tempStorage);
+    updateDGrad(numTerms, gradTol, currE, gradScale, localGrad, localPos, dGrad, converged, warp, warpIdx, laneIdx);
 
     block.sync();
 
@@ -749,7 +744,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
 
     // Update Hessian and compute new direction (reuses scratchPos as hessDGrad)
     // TODO: look into this func
-    updateInverseHessian(numTerms, invHessian, dGrad, localDir, scratchPos, localGrad, tempStorage, warp, warpIdx, laneIdx);
+    updateInverseHessian(numTerms, invHessian, dGrad, localDir, scratchPos, localGrad, block, warp, warpIdx, laneIdx);
 
     if (tid == 0) {
       currIter++;
