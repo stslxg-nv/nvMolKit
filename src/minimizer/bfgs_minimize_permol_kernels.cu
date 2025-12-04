@@ -16,7 +16,6 @@ namespace nvMolKit {
 namespace {
 constexpr int16_t BLOCK_SIZE           = 128;
 constexpr int16_t WARP_SIZE            = 32;
-constexpr int16_t NUM_WARPS             = BLOCK_SIZE / WARP_SIZE;
 constexpr int16_t MAX_LINESEARCH_ITERS = 1000;
 constexpr double  FUNCTOL              = 1e-4;
 constexpr double  MOVETOL              = 1e-7;
@@ -322,7 +321,6 @@ __device__ void updateInverseHessian(const int                                  
   __shared__ double fac, fae, fad, sumDGrad, sumXi;
   __shared__ bool   needUpdate;
 
-  double sumFac = 0.0;
   double sumTerm = 0.0;
   if (warpIdx == 0) {
     for (int i = laneIdx; i < numTerms; i += WARP_SIZE) {
