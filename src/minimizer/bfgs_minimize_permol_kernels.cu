@@ -306,14 +306,14 @@ __device__ void updateInverseHessian(const int                                  
 
   // Compute hessDGrad = invHessian * dGrad
   #pragma unroll 1
-  for (int row = warpIdx; row < numTerms; row += NUM_WARPS) {
+  for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
     double dotProduct = 0.0;
     #pragma unroll COL_UNROLL_FACTOR
-    for (int col = laneIdx; col < numTerms; col += WARP_SIZE) {
+    for (int col = 0; col < numTerms; col++) {
       // invHessian is symmetric, this has better memory coalescing
       dotProduct += invHessian[col * numTerms + row] * dGrad[col];
     }
-    cg::reduce_store_async(warp, &hessDGrad[row], dotProduct, cg::plus<double>{});
+    hessDGrad[row] = dotProduct;
   }
 
   __syncthreads();
