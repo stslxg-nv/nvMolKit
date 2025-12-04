@@ -16,6 +16,7 @@ namespace nvMolKit {
 namespace {
 constexpr int16_t BLOCK_SIZE           = 128;
 constexpr int16_t WARP_SIZE            = 32;
+constexpr int16_t NUM_WARPS             = BLOCK_SIZE / WARP_SIZE;
 constexpr int16_t MAX_LINESEARCH_ITERS = 1000;
 constexpr double  FUNCTOL              = 1e-4;
 constexpr double  MOVETOL              = 1e-7;
@@ -293,23 +294,21 @@ __device__ void updateInverseHessian(const int                                  
                                      double*                                                     xi,
                                      double*                                                     hessDGrad,
                                      double*                                                     grad,
-                                     typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage) {
-  using BlockReduce = cub::BlockReduce<double, BLOCK_SIZE>;
-
-  cg::thread_block                 block           = cg::this_thread_block();
-  cg::thread_block_tile<WARP_SIZE> warp            = cg::tiled_partition<WARP_SIZE>(block);
-  const int                        idxWithinSystem = threadIdx.x;
-  const int                        warpIdx         = mark_warp_uniform(idxWithinSystem / WARP_SIZE);
-  const int                        laneIdx         = idxWithinSystem % WARP_SIZE;
+                                     typename cub::BlockReduce<double, BLOCK_SIZE>::TempStorage& tempStorage,
+                                     const cg::thread_block_tile<WARP_SIZE>&                     warp,
+                                     const int16_t                                               warpIdx,
+                                     const int16_t                                              laneIdx) {
 
   // Compute hessDGrad = invHessian * dGrad
-  for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
+  for (int row = warpIdx; row < numTerms; row += NUM_WARPS) {
     double dotProduct = 0.0;
-    for (int col = 0; col < numTerms; col++) {
-      // invHessian is symmetric, this has better memory coalescing
-      dotProduct += invHessian[col * numTerms + row] * dGrad[col];
+
+    // Update hessDGrads: Each thread in warp processes different columns
+    for (int col = laneIdx; col < numTerms; col += WARP_SIZE) {
+      dotProduct += invHessian[row * numTerms + col] * dGrad[col];
     }
-    hessDGrad[row] = dotProduct;
+
+    cg::reduce_store_async(warp, &hessDGrad[row], dotProduct, cg::plus<double>{});
   }
 
   __syncthreads();
@@ -362,18 +361,17 @@ __device__ void updateInverseHessian(const int                                  
     __syncthreads();
     
     // Update inverse Hessian
-
-    for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
+    for (int row = warpIdx; row < numTerms; row += NUM_WARPS) {
       double pxi  = fac * xi[row];
       double hdgi = fad * hessDGrad[row];
-      double dgi = fae * dGrad[row];
+      double dgi  = fae * dGrad[row];
 
-      for (int col = 0; col < numTerms; col++) {
+      for (int col = laneIdx; col < numTerms; col += WARP_SIZE) {
         double pxj    = xi[col];
         double hdgj   = hessDGrad[col];
         double dgj    = dGrad[col];
         double update = pxi * pxj - hdgi * hdgj + dgi * dgj;
-        invHessian[col * numTerms + row] += update;
+        invHessian[row * numTerms + col] += update;
       }
     }
 
@@ -382,13 +380,12 @@ __device__ void updateInverseHessian(const int                                  
   }
 
   // Update xi = -invHessian * grad only
-  for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
+  for (int row = warpIdx; row < numTerms; row += NUM_WARPS) {
     double dotProduct = 0.0;
-    for (int col = 0; col < numTerms; col++) {
-      // invHessian is symmetric, this has better memory coalescing
-      dotProduct += invHessian[col * numTerms + row] * grad[col];
+    for (int col = laneIdx; col < numTerms; col += WARP_SIZE) {
+      dotProduct -= invHessian[row * numTerms + col] * grad[col];
     }
-    xi[row] = -dotProduct;
+    cg::reduce_store_async(warp, &xi[row], dotProduct, cg::plus<double>{});
   }
 }
 
@@ -426,9 +423,13 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
                                    int16_t*                statuses,
                                    [[maybe_unused]] double chiralWeight,
                                    [[maybe_unused]] double fourthDimWeight) {
-  const int     molIdx = molIdList[blockIdx.x];
-  const int16_t tid    = threadIdx.x;
+  cg::thread_block                 block = cg::this_thread_block();
+  cg::thread_block_tile<WARP_SIZE> warp  = cg::tiled_partition<WARP_SIZE>(block);
+  const int16_t tid                      = threadIdx.x;
+  const int16_t warpIdx                  = mark_warp_uniform(tid / WARP_SIZE);
+  const int16_t laneIdx                  = tid % WARP_SIZE;
 
+  const int     molIdx    = molIdList[blockIdx.x];
   const int     atomStart = atomStarts[molIdx];
   const int     atomEnd   = atomStarts[molIdx + 1];
   const int16_t numAtoms  = atomEnd - atomStart;
@@ -564,7 +565,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
                                              tid);
   }
   
-  __syncthreads();
+  block.sync();
 
   // if (tid == 0) {
   //    printf("Initial grad[0]=%f, grad[%d]=%f\n", localGrad[0], numTerms-1, localGrad[numTerms-1]);
@@ -577,7 +578,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     scaleGrad<false>(numTerms, localGrad, gradScale, tempStorage);
   }
 
-  // __syncthreads();
+  // block.sync();
   // if (tid == 0) {
   //   printf("After scaling: gradScale=%f, grad[0]=%f, grad[%d]=%f\n",  gradScale, localGrad[0], numTerms-1, localGrad[numTerms-1]);
   // }
@@ -589,7 +590,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     localDir[i] = -localGrad[i];
   }
 
-  // __syncthreads();
+  // block.sync();
   // if (tid == 0) {
   //   printf("Initial dir[0]=%f, dir[%d]=%f\n", localDir[0], numTerms-1, localDir[numTerms-1]);
   // }
@@ -599,7 +600,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
   if (tid == 0) {
     currIter = 0;
   }
-  __syncthreads();
+  block.sync();
 
   while (!converged && currIter < numIters) {
     // if (tid == 0) {
@@ -619,12 +620,12 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       lambda              = 1.0;
     }
     
-    __syncthreads();
+    block.sync();
 
     // TODO: look into this func
     lineSearchSetup(numTerms, localPos, localGrad, maxStep, localDir, slope, lambdaMin, tempStorage);
 
-    __syncthreads();
+    block.sync();
 
     // if (tid == 0) {
     //   printf("  Line search setup: slope=%f, lambdaMin=%f, lambda=%f\n", slope, lambdaMin, lambda);
@@ -643,7 +644,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
         globalPos[i] = scratchPos[i];
       }
 
-      __syncthreads();
+      block.sync();
 
       // Compute energy at perturbed position
       double lsThreadEnergy;
@@ -670,7 +671,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
         lineSearchIter++;
       }
 
-      __syncthreads();
+      block.sync();
     }
 
     // Update positions with final line search result and compute direction
@@ -683,7 +684,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     // Set direction (compute xi = new - old)
     setDirection(numTerms, scratchPos, oldPos, localDir, dGrad, localGrad, converged, tempStorage);
 
-    __syncthreads();
+    block.sync();
 
     if (converged) {
       // if (tid == 0) {
@@ -706,7 +707,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
       localGrad[i] = 0.0;
     }
 
-    __syncthreads();
+    block.sync();
 
     if constexpr (FFType == ForceFieldType::MMFF) {
       MMFF::molGrad<BLOCK_SIZE>(*terms, *systemIndices, positions, localGrad, molIdx, tid);
@@ -723,10 +724,10 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
                                                tid);
     }
 
-    __syncthreads();
+    block.sync();
 
     // Scale gradients
-    // Implicit __syncthreads() inside scaleGrad due to BlockReduce and gradScale computation
+    // Implicit block.sync() inside scaleGrad due to BlockReduce and gradScale computation
     if (scaleGrads) {
       scaleGrad<true>(numTerms, localGrad, gradScale, tempStorage);
     } else {
@@ -737,7 +738,7 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
     // no need to sync before this for localGrad since the access pattern is consistent to scaleGrad
     updateDGrad(numTerms, gradTol, currE, gradScale, localGrad, localPos, dGrad, converged, tempStorage);
 
-    __syncthreads();
+    block.sync();
 
     if (converged) {
       // if (tid == 0) {
@@ -748,12 +749,12 @@ __global__ void bfgsMinimizeKernel(const int               numIters,
 
     // Update Hessian and compute new direction (reuses scratchPos as hessDGrad)
     // TODO: look into this func
-    updateInverseHessian(numTerms, invHessian, dGrad, localDir, scratchPos, localGrad, tempStorage);
+    updateInverseHessian(numTerms, invHessian, dGrad, localDir, scratchPos, localGrad, tempStorage, warp, warpIdx, laneIdx);
 
     if (tid == 0) {
       currIter++;
     }
-    __syncthreads();
+    block.sync();
   }
 
   // Write final energy and status
