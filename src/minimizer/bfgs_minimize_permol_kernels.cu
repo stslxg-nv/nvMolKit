@@ -20,7 +20,6 @@ constexpr int16_t MAX_LINESEARCH_ITERS = 1000;
 constexpr double  FUNCTOL              = 1e-4;
 constexpr double  MOVETOL              = 1e-7;
 constexpr double  TOLX                 = 4. * 3e-8;
-constexpr int COL_UNROLL_FACTOR        = 4;
 
 __device__ void setMaxStep(const double*                                               pos,
                            const int                                                   numTerms,
@@ -304,10 +303,8 @@ __device__ void updateInverseHessian(const int                                  
   const int                        laneIdx         = idxWithinSystem % WARP_SIZE;
 
   // Compute hessDGrad = invHessian * dGrad
-  #pragma unroll 1
   for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
     double dotProduct = 0.0;
-    #pragma unroll COL_UNROLL_FACTOR
     for (int col = 0; col < numTerms; col++) {
       // invHessian is symmetric, this has better memory coalescing
       dotProduct += invHessian[col * numTerms + row] * dGrad[col];
@@ -359,20 +356,18 @@ __device__ void updateInverseHessian(const int                                  
 
   if (needUpdate) {
     // Update dGrad for Hessian update
-    #pragma unroll 1
     for (int i = threadIdx.x; i < numTerms; i += BLOCK_SIZE) {
       dGrad[i] = fac * xi[i] - fad * hessDGrad[i];
     }
     __syncthreads();
     
     // Update inverse Hessian
-    #pragma unroll 1
+
     for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
       double pxi  = fac * xi[row];
       double hdgi = fad * hessDGrad[row];
       double dgi = fae * dGrad[row];
 
-      #pragma unroll COL_UNROLL_FACTOR
       for (int col = 0; col < numTerms; col++) {
         double pxj    = xi[col];
         double hdgj   = hessDGrad[col];
@@ -387,10 +382,8 @@ __device__ void updateInverseHessian(const int                                  
   }
 
   // Update xi = -invHessian * grad only
-  #pragma unroll 1
   for (int row = threadIdx.x; row < numTerms; row += BLOCK_SIZE) {
     double dotProduct = 0.0;
-    #pragma unroll COL_UNROLL_FACTOR
     for (int col = 0; col < numTerms; col++) {
       // invHessian is symmetric, this has better memory coalescing
       dotProduct += invHessian[col * numTerms + row] * grad[col];
