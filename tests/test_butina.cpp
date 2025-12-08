@@ -161,7 +161,7 @@ TEST_P(ButinaClusterTestFixture, ClusteringMatchesReference) {
   const auto [nPts, enforceStrictIndexing] = GetParam();
   constexpr double       cutoff            = 0.1;
   const auto             distances         = makeSymmetricDifferenceMatrix(nPts, rng);
-  const auto             adjacency         = makeAdjacency(distances, nPts, cutoff);
+  const auto             adjacency         = makeAdjacency(distances, cutoff);
   const std::vector<int> labels            = runButina(distances, nPts, cutoff, enforceStrictIndexing, stream);
   SCOPED_TRACE(::testing::Message() << "nPts=" << nPts << " enforceStrictIndexing=" << enforceStrictIndexing);
   checkButinaCorrectness(adjacency, labels, enforceStrictIndexing);
